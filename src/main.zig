@@ -9,10 +9,10 @@ const vk = @cImport({
 });
 
 // tasks:
-// read up on vulcan
-//    - https://docs.vulkan.org/tutorial/latest/00_Introduction.html
-//      - winAPI and vulcan.h only https://github.com/DarknessFX/zig_workbench/blob/fd6bae8f9236782f92759e64eecbbcc46fad83d6/BaseVulkan/main_vulkanw32.zig#L142
-//      - zig version which follows tutorial, but old and uses glfw which is no longer maintained for zig? https://github.com/Vulfox/vulkan-tutorial-zig/tree/main
+// follow vulcan tutorial:
+//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.html
+//       - winAPI and vulcan.h only https://github.com/DarknessFX/zig_workbench/blob/fd6bae8f9236782f92759e64eecbbcc46fad83d6/BaseVulkan/main_vulkanw32.zig#L142
+//       - zig version which follows tutorial, but old and uses glfw which is no longer maintained for zig? https://github.com/Vulfox/vulkan-tutorial-zig/tree/main
 // draw anything in window
 //
 pub fn main() !void {
