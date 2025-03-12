@@ -32,4 +32,15 @@ pub fn build(b: *std.Build) void {
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const vulkan_sdk = "C:/Zeugs/VulkanSDK/1.4.304.1/";
+    exe.addIncludePath(.{ .cwd_relative = vulkan_sdk ++ "Include" });
+    exe.addIncludePath(.{ .cwd_relative = vulkan_sdk ++ "Include/vulkan" });
+    exe.addLibraryPath(.{ .cwd_relative = vulkan_sdk ++ "lib" });
+    exe.linkSystemLibrary("vulkan-1");
+    exe.linkLibC();
+    const vulkan = b.dependency("vulkan_zig", .{
+        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+    }).module("vulkan-zig");
+    exe.root_module.addImport("vulkan", vulkan);
 }
