@@ -10,7 +10,7 @@ const vk = @cImport({
 
 // tasks:
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/01_Presentation/02_Image_views.html
+//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/00_Framebuffers.html
 //       - winAPI and vulcan.h only https://github.com/DarknessFX/zig_workbench/blob/fd6bae8f9236782f92759e64eecbbcc46fad83d6/BaseVulkan/main_vulkanw32.zig#L142
 //       - zig version which follows tutorial, but old and uses glfw which is no longer maintained for zig? https://github.com/Vulfox/vulkan-tutorial-zig/tree/main
 // draw anything in window
@@ -148,12 +148,221 @@ fn initWindow() !void {
     defer vk.vkDestroyDevice(vk_state.logicalDevice, null);
     try createSwapChain();
     defer vk.vkDestroySwapchainKHR(vk_state.logicalDevice, vk_state.swapchain, null);
-    //vkDestroySwapchainKHR don't forget
+    try createImageViews();
+    for (vk_state.swapchain_imageviews) |imgvw| {
+        defer vk.vkDestroyImageView(vk_state.logicalDevice, imgvw, null);
+    }
+    try createRenderPass();
+    defer vk.vkDestroyRenderPass(vk_state.logicalDevice, vk_state.render_pass, null);
+    try createGraphicsPipeline();
+    defer vk.vkDestroyPipelineLayout(vk_state.logicalDevice, vk_state.pipeline_layout, null);
+    defer vk.vkDestroyPipeline(vk_state.logicalDevice, vk_state.graphics_pipeline, null);
     // keep running for 2sec
     var counter: u32 = 0;
     while (counter < 20) {
         counter += 1;
         std.time.sleep(100_000_000);
+    }
+}
+
+fn createRenderPass() !void {
+    var colorAttachment = vk.VkAttachmentDescription{
+        .format = vk_state.swapchain_info.format.format,
+        .samples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    var colorAttachmentRef = vk.VkAttachmentReference{
+        .attachment = 0,
+        .layout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    var subpass = vk.VkSubpassDescription{
+        .pipelineBindPoint = vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachmentRef,
+    };
+
+    var renderPassInfo = vk.VkRenderPassCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &colorAttachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 0,
+        .pDependencies = null,
+    };
+    try vkcheck(vk.vkCreateRenderPass(vk_state.logicalDevice, &renderPassInfo, null, &vk_state.render_pass), "Failed to create Render Pass.");
+    std.debug.print("Render Pass Created : {any}\n", .{vk_state.render_pass});
+}
+
+fn createGraphicsPipeline() !void {
+    const vertShaderCode = try readFile("src/vert.spv");
+    const fragShaderCode = try readFile("src/frag.spv");
+    const vertShaderModule = try createShaderModule(vertShaderCode);
+    defer vk.vkDestroyShaderModule(vk_state.logicalDevice, vertShaderModule, null);
+    const fragShaderModule = try createShaderModule(fragShaderCode);
+    defer vk.vkDestroyShaderModule(vk_state.logicalDevice, fragShaderModule, null);
+
+    const vertShaderStageInfo = vk.VkPipelineShaderStageCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = vk.VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vertShaderModule,
+        .pName = "main",
+    };
+
+    const fragShaderStageInfo = vk.VkPipelineShaderStageCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = fragShaderModule,
+        .pName = "main",
+    };
+
+    const shaderStages = [_]vk.VkPipelineShaderStageCreateInfo{ vertShaderStageInfo, fragShaderStageInfo };
+
+    var vertexInputInfo = vk.VkPipelineVertexInputStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = null,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = null,
+    };
+
+    var inputAssembly = vk.VkPipelineInputAssemblyStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = vk.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = vk.VK_FALSE,
+    };
+
+    var viewportState = vk.VkPipelineViewportStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .pViewports = null,
+        .scissorCount = 1,
+        .pScissors = null,
+    };
+
+    var rasterizer = vk.VkPipelineRasterizationStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .depthClampEnable = vk.VK_FALSE,
+        .rasterizerDiscardEnable = vk.VK_FALSE,
+        .polygonMode = vk.VK_POLYGON_MODE_FILL,
+        .lineWidth = 1.0,
+        .cullMode = vk.VK_CULL_MODE_BACK_BIT,
+        .frontFace = vk.VK_FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = vk.VK_FALSE,
+        .depthBiasConstantFactor = 0.0,
+        .depthBiasClamp = 0.0,
+        .depthBiasSlopeFactor = 0.0,
+    };
+
+    var multisampling = vk.VkPipelineMultisampleStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .sampleShadingEnable = vk.VK_FALSE,
+        .rasterizationSamples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .minSampleShading = 1.0,
+        .pSampleMask = null,
+        .alphaToCoverageEnable = vk.VK_FALSE,
+        .alphaToOneEnable = vk.VK_FALSE,
+    };
+
+    var colorBlendAttachment = vk.VkPipelineColorBlendAttachmentState{
+        .colorWriteMask = vk.VK_COLOR_COMPONENT_R_BIT | vk.VK_COLOR_COMPONENT_G_BIT | vk.VK_COLOR_COMPONENT_B_BIT | vk.VK_COLOR_COMPONENT_A_BIT,
+        .blendEnable = vk.VK_FALSE,
+    };
+
+    var colorBlending = vk.VkPipelineColorBlendStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOpEnable = vk.VK_FALSE,
+        .logicOp = vk.VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &colorBlendAttachment,
+        .blendConstants = [_]f32{ 0.0, 0.0, 0.0, 0.0 },
+    };
+
+    const dynamicStates = [_]vk.VkDynamicState{
+        vk.VK_DYNAMIC_STATE_VIEWPORT,
+        vk.VK_DYNAMIC_STATE_SCISSOR,
+    };
+
+    var dynamicState = vk.VkPipelineDynamicStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = dynamicStates.len,
+        .pDynamicStates = &dynamicStates,
+    };
+
+    var pipelineLayoutInfo = vk.VkPipelineLayoutCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 0,
+        .pSetLayouts = null,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+    try vkcheck(vk.vkCreatePipelineLayout(vk_state.logicalDevice, &pipelineLayoutInfo, null, &vk_state.pipeline_layout), "Failed to create pipeline layout.");
+    std.debug.print("Pipeline Layout Created : {any}\n", .{vk_state.pipeline_layout});
+
+    var pipelineInfo = vk.VkGraphicsPipelineCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = 2,
+        .pStages = &shaderStages,
+        .pVertexInputState = &vertexInputInfo,
+        .pInputAssemblyState = &inputAssembly,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizer,
+        .pMultisampleState = &multisampling,
+        .pColorBlendState = &colorBlending,
+        .pDynamicState = &dynamicState,
+        .layout = vk_state.pipeline_layout,
+        .renderPass = vk_state.render_pass,
+        .subpass = 0,
+        .basePipelineHandle = null,
+        .pNext = null,
+    };
+    try vkcheck(vk.vkCreateGraphicsPipelines(vk_state.logicalDevice, null, 1, &pipelineInfo, null, &vk_state.graphics_pipeline), "Failed to create graphics pipeline.");
+    std.debug.print("Graphics Pipeline Created : {any}\n", .{vk_state.pipeline_layout});
+}
+
+fn createShaderModule(code: []const u8) !vk.VkShaderModule {
+    var createInfo = vk.VkShaderModuleCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = code.len,
+        .pCode = @alignCast(@ptrCast(code.ptr)),
+    };
+    var shaderModule: vk.VkShaderModule = undefined; //std.mem.zeroes(vk.VkShaderModule)
+    try vkcheck(vk.vkCreateShaderModule(vk_state.logicalDevice, &createInfo, null, &shaderModule), "Failed to create Shader Module.");
+    std.debug.print("Shader Module Created : {any}\n", .{shaderModule});
+    return shaderModule;
+}
+
+fn createImageViews() !void {
+    vk_state.swapchain_imageviews = try std.heap.page_allocator.alloc(vk.VkImageView, vk_state.swapchain_info.images.len);
+    for (vk_state.swapchain_info.images, 0..) |image, i| {
+        var createInfo = vk.VkImageViewCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image,
+            .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
+            .format = vk_state.swapchain_info.format.format,
+            .components = vk.VkComponentMapping{
+                .r = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = vk.VkImageSubresourceRange{
+                .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+        try vkcheck(vk.vkCreateImageView(vk_state.logicalDevice, &createInfo, null, &vk_state.swapchain_imageviews[i]), "Failed to create swapchain image views.");
+        std.debug.print("Swapchain ImageView Created : {any}\n", .{vk_state.swapchain_imageviews[i]});
     }
 }
 
@@ -355,4 +564,9 @@ fn vkcheck(result: vk.VkResult, comptime err_msg: []const u8) !void {
         std.debug.print("Vulkan error : {s}\n", .{err_msg});
         return error.VulkanError;
     }
+}
+
+fn readFile(filename: []const u8) ![]u8 {
+    const code = try std.fs.cwd().readFileAlloc(std.heap.page_allocator, filename, std.math.maxInt(usize));
+    return code;
 }
