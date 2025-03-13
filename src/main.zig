@@ -10,9 +10,8 @@ const vk = @cImport({
 
 // tasks:
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/00_Framebuffers.html
+//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.html
 //       - winAPI and vulcan.h only https://github.com/DarknessFX/zig_workbench/blob/fd6bae8f9236782f92759e64eecbbcc46fad83d6/BaseVulkan/main_vulkanw32.zig#L142
-//       - zig version which follows tutorial, but old and uses glfw which is no longer maintained for zig? https://github.com/Vulfox/vulkan-tutorial-zig/tree/main
 // draw anything in window
 //
 
@@ -58,7 +57,7 @@ const SwapChainSupportDetails = struct {
 
 pub fn main() !void {
     std.debug.print("start\n", .{});
-
+    std.debug.print("validation layer support: {}\n", .{checkValidationLayerSupport()});
     try initWindow();
     std.debug.print("done\n", .{});
 }
@@ -132,6 +131,18 @@ fn initWindow() !void {
     const extensions: [*][*c]const u8 = @constCast(@ptrCast(&requiredExtensions));
     instance_create_info.enabledExtensionCount = extension_count;
     instance_create_info.ppEnabledExtensionNames = extensions;
+
+    var extension_list = std.ArrayList([*c]const u8).init(std.heap.page_allocator);
+    for (requiredExtensions[0..extension_count]) |ext| {
+        try extension_list.append(ext);
+    }
+
+    try extension_list.append(vk.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    instance_create_info.enabledExtensionCount = @intCast(extension_list.items.len);
+    const extensions_ = try extension_list.toOwnedSlice();
+    const pp_enabled_layer_names: [*][*c]const u8 = extensions_.ptr;
+    instance_create_info.ppEnabledExtensionNames = pp_enabled_layer_names;
+
     if (vk.vkCreateInstance(&instance_create_info, null, &vk_instance) != vk.VK_SUCCESS) return error.vkCreateInstance;
     defer vk.vkDestroyInstance(vk_instance, null);
     const createInfo = vk.VkWin32SurfaceCreateInfoKHR{
@@ -157,11 +168,155 @@ fn initWindow() !void {
     try createGraphicsPipeline();
     defer vk.vkDestroyPipelineLayout(vk_state.logicalDevice, vk_state.pipeline_layout, null);
     defer vk.vkDestroyPipeline(vk_state.logicalDevice, vk_state.graphics_pipeline, null);
+    try createFramebuffers();
+    for (vk_state.framebuffers) |fb| {
+        defer vk.vkDestroyFramebuffer(vk_state.logicalDevice, fb, null);
+    }
+    try createCommandPool();
+    defer vk.vkDestroyCommandPool(vk_state.logicalDevice, vk_state.command_pool, null);
+    try createCommandBuffer();
+    try createSyncObjects();
+    defer vk.vkDestroyFence(vk_state.logicalDevice, vk_state.inFlightFence, null);
+    defer vk.vkDestroySemaphore(vk_state.logicalDevice, vk_state.imageAvailableSemaphore, null);
+    defer vk.vkDestroySemaphore(vk_state.logicalDevice, vk_state.renderFinishedSemaphore, null);
+
     // keep running for 2sec
     var counter: u32 = 0;
     while (counter < 20) {
         counter += 1;
+        try drawFrame();
         std.time.sleep(100_000_000);
+    }
+    _ = vk.vkDeviceWaitIdle(vk_state.logicalDevice);
+}
+
+fn drawFrame() !void {
+    _ = vk.vkWaitForFences(vk_state.logicalDevice, 1, &vk_state.inFlightFence, vk.VK_TRUE, std.math.maxInt(u64));
+    _ = vk.vkResetFences(vk_state.logicalDevice, 1, &vk_state.inFlightFence);
+
+    var imageIndex: u32 = undefined;
+    _ = vk.vkAcquireNextImageKHR(vk_state.logicalDevice, vk_state.swapchain, std.math.maxInt(u64), vk_state.imageAvailableSemaphore, null, &imageIndex);
+
+    _ = vk.vkResetCommandBuffer(vk_state.command_buffer, 0);
+    try recordCommandBuffer(vk_state.command_buffer, imageIndex);
+
+    var submitInfo = vk.VkSubmitInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vk_state.imageAvailableSemaphore},
+        .pWaitDstStageMask = &[_]vk.VkPipelineStageFlags{vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT},
+        .commandBufferCount = 1,
+        .pCommandBuffers = &vk_state.command_buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &[_]vk.VkSemaphore{vk_state.renderFinishedSemaphore},
+    };
+    try vkcheck(vk.vkQueueSubmit(vk_state.queue, 1, &submitInfo, vk_state.inFlightFence), "Failed to Queue Submit.");
+
+    var presentInfo = vk.VkPresentInfoKHR{
+        .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vk_state.renderFinishedSemaphore},
+        .swapchainCount = 1,
+        .pSwapchains = &[_]vk.VkSwapchainKHR{vk_state.swapchain},
+        .pImageIndices = &imageIndex,
+    };
+    try vkcheck(vk.vkQueuePresentKHR(vk_state.queue, &presentInfo), "Failed to Queue Present KHR.");
+}
+
+fn createSyncObjects() !void {
+    var semaphoreInfo = vk.VkSemaphoreCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+    var fenceInfo = vk.VkFenceCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    if (vk.vkCreateSemaphore(vk_state.logicalDevice, &semaphoreInfo, null, &vk_state.imageAvailableSemaphore) != vk.VK_SUCCESS or
+        vk.vkCreateSemaphore(vk_state.logicalDevice, &semaphoreInfo, null, &vk_state.renderFinishedSemaphore) != vk.VK_SUCCESS or
+        vk.vkCreateFence(vk_state.logicalDevice, &fenceInfo, null, &vk_state.inFlightFence) != vk.VK_SUCCESS)
+    {
+        std.debug.print("Failed to Create Semaphore or Create Fence.\n", .{});
+        return error.FailedToCreateSyncObjects;
+    }
+}
+
+fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32) !void {
+    var beginInfo = vk.VkCommandBufferBeginInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+    try vkcheck(vk.vkBeginCommandBuffer(vk_state.command_buffer, &beginInfo), "Failed to Begin Command Buffer.");
+
+    const renderPassInfo = vk.VkRenderPassBeginInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = vk_state.render_pass,
+        .framebuffer = vk_state.framebuffers[imageIndex],
+        .renderArea = vk.VkRect2D{
+            .offset = vk.VkOffset2D{ .x = 0, .y = 0 },
+            .extent = vk_state.swapchain_info.extent,
+        },
+        .clearValueCount = 1,
+        .pClearValues = &[_]vk.VkClearValue{.{ .color = vk.VkClearColorValue{ .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 } } }},
+    };
+    vk.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, vk.VK_SUBPASS_CONTENTS_INLINE);
+    vk.vkCmdBindPipeline(commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, vk_state.graphics_pipeline);
+    var viewport = vk.VkViewport{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @floatFromInt(vk_state.swapchain_info.extent.width),
+        .height = @floatFromInt(vk_state.swapchain_info.extent.height),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+    vk.vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    var scissor = vk.VkRect2D{
+        .offset = vk.VkOffset2D{ .x = 0, .y = 0 },
+        .extent = vk_state.swapchain_info.extent,
+    };
+    vk.vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    vk.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vk.vkCmdEndRenderPass(commandBuffer);
+    try vkcheck(vk.vkEndCommandBuffer(vk_state.command_buffer), "Failed to End Command Buffer.");
+}
+
+fn createCommandBuffer() !void {
+    var allocInfo = vk.VkCommandBufferAllocateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = vk_state.command_pool,
+        .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    try vkcheck(vk.vkAllocateCommandBuffers(vk_state.logicalDevice, &allocInfo, &vk_state.command_buffer), "Failed to create Command Pool.");
+    std.debug.print("Command Buffer : {any}\n", .{vk_state.command_buffer});
+}
+
+fn createCommandPool() !void {
+    const queueFamilyIndices = try findQueueFamilies(vk_state.physical_device);
+    var poolInfo = vk.VkCommandPoolCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = queueFamilyIndices.graphicsFamily.?,
+    };
+    try vkcheck(vk.vkCreateCommandPool(vk_state.logicalDevice, &poolInfo, null, &vk_state.command_pool), "Failed to create Command Pool.");
+    std.debug.print("Command Pool : {any}\n", .{vk_state.command_pool});
+}
+
+fn createFramebuffers() !void {
+    vk_state.framebuffers = try std.heap.page_allocator.alloc(vk.VkFramebuffer, vk_state.swapchain_imageviews.len);
+
+    for (vk_state.swapchain_imageviews, 0..) |imageView, i| {
+        var attachments = [_]vk.VkImageView{imageView};
+        var framebufferInfo = vk.VkFramebufferCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass = vk_state.render_pass,
+            .attachmentCount = 1,
+            .pAttachments = &attachments,
+            .width = vk_state.swapchain_info.extent.width,
+            .height = vk_state.swapchain_info.extent.height,
+            .layers = 1,
+        };
+        try vkcheck(vk.vkCreateFramebuffer(vk_state.logicalDevice, &framebufferInfo, null, &vk_state.framebuffers[i]), "Failed to create Framebuffer.");
+        std.debug.print("Framebuffer Created : {any}\n", .{vk_state.pipeline_layout});
     }
 }
 
@@ -468,10 +623,41 @@ fn chooseSwapExtent(capabilities: vk.VkSurfaceCapabilitiesKHR) vk.VkExtent2D {
     }
 }
 
+pub const validation_layers = [_][*c]const u8{"VK_LAYER_KHRONOS_validation"};
+pub fn checkValidationLayerSupport() bool {
+    var layer_count: u32 = 0;
+    _ = vk.vkEnumerateInstanceLayerProperties(&layer_count, null);
+
+    const available_layers = std.heap.page_allocator.alloc(vk.VkLayerProperties, layer_count) catch unreachable;
+    defer std.heap.page_allocator.free(available_layers);
+    _ = vk.vkEnumerateInstanceLayerProperties(&layer_count, available_layers.ptr);
+
+    std.debug.print("Validation check, searching: \n", .{});
+    for (validation_layers) |layer_name| {
+        const layer_name_span = std.mem.span(layer_name);
+        const layer_name_len = layer_name_span.len;
+        std.debug.print("  {s}\nValidation properties list :\n", .{layer_name_span});
+        var found: bool = false;
+        for (available_layers) |layer_properties| {
+            std.debug.print("  {s}\n", .{layer_properties.layerName});
+            const prop_name_len = std.mem.indexOf(u8, layer_properties.layerName[0..], &[_]u8{0}) orelse 256;
+            if (layer_name_len == prop_name_len) {
+                std.debug.print("Found:\n  {s}\n", .{&layer_properties.layerName});
+                if (std.mem.eql(u8, layer_name_span, layer_properties.layerName[0..prop_name_len])) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 fn createLogicalDevice(physical_device: vk.VkPhysicalDevice) !void {
     var queue_create_info = vk.VkDeviceQueueCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = graphics_queue_family_idx,
+        .queueFamilyIndex = vk_state.graphics_queue_family_idx,
         .queueCount = 1,
         .pQueuePriorities = &[_]f32{1.0},
     };
@@ -484,11 +670,11 @@ fn createLogicalDevice(physical_device: vk.VkPhysicalDevice) !void {
         .enabledExtensionCount = 1,
         .ppEnabledExtensionNames = &[_][*c]const u8{vk.VK_KHR_SWAPCHAIN_EXTENSION_NAME},
     };
-    device_create_info.enabledLayerCount = 0;
-    device_create_info.ppEnabledLayerNames = null;
+    device_create_info.enabledLayerCount = 1;
+    device_create_info.ppEnabledLayerNames = &validation_layers;
     try vkcheck(vk.vkCreateDevice(physical_device, &device_create_info, null, &vk_state.logicalDevice), "Failed to create logical device");
     std.debug.print("Logical Device Created : {any}\n", .{vk_state.logicalDevice});
-    vk.vkGetDeviceQueue(vk_state.logicalDevice, graphics_queue_family_idx, 0, &vk_state.queue);
+    vk.vkGetDeviceQueue(vk_state.logicalDevice, vk_state.graphics_queue_family_idx, 0, &vk_state.queue);
     std.debug.print("Queue Obtained : {any}\n", .{vk_state.queue});
 }
 
@@ -515,10 +701,9 @@ fn pickPhysicalDevice(instance: vk.VkInstance) !vk.VkPhysicalDevice {
     }
     return error.NoSuitableGPU;
 }
-var graphics_queue_family_idx: u32 = undefined;
 fn isDeviceSuitable(device: vk.VkPhysicalDevice) !bool {
     const indices: QueueFamilyIndices = try findQueueFamilies(device);
-    graphics_queue_family_idx = indices.graphicsFamily.?;
+    vk_state.graphics_queue_family_idx = indices.graphicsFamily.?;
     return indices.isComplete();
 }
 
