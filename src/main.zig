@@ -38,10 +38,12 @@ const Vk_State = struct {
     graphics_pipeline: vk.VkPipeline = undefined,
     framebuffers: []vk.VkFramebuffer = undefined,
     command_pool: vk.VkCommandPool = undefined,
-    command_buffer: vk.VkCommandBuffer = undefined,
-    imageAvailableSemaphore: vk.VkSemaphore = undefined,
-    renderFinishedSemaphore: vk.VkSemaphore = undefined,
-    inFlightFence: vk.VkFence = undefined,
+    command_buffer: []vk.VkCommandBuffer = undefined,
+    imageAvailableSemaphore: []vk.VkSemaphore = undefined,
+    renderFinishedSemaphore: []vk.VkSemaphore = undefined,
+    inFlightFence: []vk.VkFence = undefined,
+    currentFrame: u16 = 0,
+    const MAX_FRAMES_IN_FLIGH: u16 = 2;
 };
 
 const SwapChainSupportDetails = struct {
@@ -131,7 +133,7 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createGraphicsPipeline(vkState);
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
-    try createCommandBuffer(vkState);
+    try createCommandBuffers(vkState);
     try createSyncObjects(vkState);
 }
 
@@ -142,9 +144,11 @@ fn destroy(vkState: *Vk_State) !void {
     for (vkState.framebuffers) |fb| {
         vk.vkDestroyFramebuffer(vkState.logicalDevice, fb, null);
     }
-    vk.vkDestroySemaphore(vkState.logicalDevice, vkState.imageAvailableSemaphore, null);
-    vk.vkDestroySemaphore(vkState.logicalDevice, vkState.renderFinishedSemaphore, null);
-    vk.vkDestroyFence(vkState.logicalDevice, vkState.inFlightFence, null);
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGH) |i| {
+        vk.vkDestroySemaphore(vkState.logicalDevice, vkState.imageAvailableSemaphore[i], null);
+        vk.vkDestroySemaphore(vkState.logicalDevice, vkState.renderFinishedSemaphore[i], null);
+        vk.vkDestroyFence(vkState.logicalDevice, vkState.inFlightFence[i], null);
+    }
     vk.vkDestroyCommandPool(vkState.logicalDevice, vkState.command_pool, null);
     vk.vkDestroyPipeline(vkState.logicalDevice, vkState.graphics_pipeline, null);
     vk.vkDestroyPipelineLayout(vkState.logicalDevice, vkState.pipeline_layout, null);
@@ -210,36 +214,37 @@ fn createInstance(vkState: *Vk_State) !void {
 }
 
 fn drawFrame(vkState: *Vk_State) !void {
-    _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence, vk.VK_TRUE, std.math.maxInt(u64));
-    _ = vk.vkResetFences(vkState.logicalDevice, 1, &vkState.inFlightFence);
+    _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame], vk.VK_TRUE, std.math.maxInt(u64));
+    _ = vk.vkResetFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame]);
 
     var imageIndex: u32 = undefined;
-    _ = vk.vkAcquireNextImageKHR(vkState.logicalDevice, vkState.swapchain, std.math.maxInt(u64), vkState.imageAvailableSemaphore, null, &imageIndex);
+    _ = vk.vkAcquireNextImageKHR(vkState.logicalDevice, vkState.swapchain, std.math.maxInt(u64), vkState.imageAvailableSemaphore[vkState.currentFrame], null, &imageIndex);
 
-    _ = vk.vkResetCommandBuffer(vkState.command_buffer, 0);
-    try recordCommandBuffer(vkState.command_buffer, imageIndex, vkState);
+    _ = vk.vkResetCommandBuffer(vkState.command_buffer[vkState.currentFrame], 0);
+    try recordCommandBuffer(vkState.command_buffer[vkState.currentFrame], imageIndex, vkState);
 
     var submitInfo = vk.VkSubmitInfo{
         .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.imageAvailableSemaphore},
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.imageAvailableSemaphore[vkState.currentFrame]},
         .pWaitDstStageMask = &[_]vk.VkPipelineStageFlags{vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT},
         .commandBufferCount = 1,
-        .pCommandBuffers = &vkState.command_buffer,
+        .pCommandBuffers = &vkState.command_buffer[vkState.currentFrame],
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore},
+        .pSignalSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore[vkState.currentFrame]},
     };
-    try vkcheck(vk.vkQueueSubmit(vkState.queue, 1, &submitInfo, vkState.inFlightFence), "Failed to Queue Submit.");
+    try vkcheck(vk.vkQueueSubmit(vkState.queue, 1, &submitInfo, vkState.inFlightFence[vkState.currentFrame]), "Failed to Queue Submit.");
 
     var presentInfo = vk.VkPresentInfoKHR{
         .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore},
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore[vkState.currentFrame]},
         .swapchainCount = 1,
         .pSwapchains = &[_]vk.VkSwapchainKHR{vkState.swapchain},
         .pImageIndices = &imageIndex,
     };
     try vkcheck(vk.vkQueuePresentKHR(vkState.queue, &presentInfo), "Failed to Queue Present KHR.");
+    vkState.currentFrame = (vkState.currentFrame + 1) % Vk_State.MAX_FRAMES_IN_FLIGH;
 }
 
 fn createSyncObjects(vkState: *Vk_State) !void {
@@ -250,13 +255,18 @@ fn createSyncObjects(vkState: *Vk_State) !void {
         .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
     };
+    vkState.imageAvailableSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGH);
+    vkState.renderFinishedSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGH);
+    vkState.inFlightFence = try std.heap.page_allocator.alloc(vk.VkFence, Vk_State.MAX_FRAMES_IN_FLIGH);
 
-    if (vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.imageAvailableSemaphore) != vk.VK_SUCCESS or
-        vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.renderFinishedSemaphore) != vk.VK_SUCCESS or
-        vk.vkCreateFence(vkState.logicalDevice, &fenceInfo, null, &vkState.inFlightFence) != vk.VK_SUCCESS)
-    {
-        std.debug.print("Failed to Create Semaphore or Create Fence.\n", .{});
-        return error.FailedToCreateSyncObjects;
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGH) |i| {
+        if (vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.imageAvailableSemaphore[i]) != vk.VK_SUCCESS or
+            vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.renderFinishedSemaphore[i]) != vk.VK_SUCCESS or
+            vk.vkCreateFence(vkState.logicalDevice, &fenceInfo, null, &vkState.inFlightFence[i]) != vk.VK_SUCCESS)
+        {
+            std.debug.print("Failed to Create Semaphore or Create Fence.\n", .{});
+            return error.FailedToCreateSyncObjects;
+        }
     }
 }
 
@@ -264,7 +274,7 @@ fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkSta
     var beginInfo = vk.VkCommandBufferBeginInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
-    try vkcheck(vk.vkBeginCommandBuffer(vkState.command_buffer, &beginInfo), "Failed to Begin Command Buffer.");
+    try vkcheck(vk.vkBeginCommandBuffer(commandBuffer, &beginInfo), "Failed to Begin Command Buffer.");
 
     const renderPassInfo = vk.VkRenderPassBeginInfo{
         .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -295,17 +305,19 @@ fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkSta
     vk.vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     vk.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     vk.vkCmdEndRenderPass(commandBuffer);
-    try vkcheck(vk.vkEndCommandBuffer(vkState.command_buffer), "Failed to End Command Buffer.");
+    try vkcheck(vk.vkEndCommandBuffer(commandBuffer), "Failed to End Command Buffer.");
 }
 
-fn createCommandBuffer(vkState: *Vk_State) !void {
+fn createCommandBuffers(vkState: *Vk_State) !void {
+    vkState.command_buffer = try std.heap.page_allocator.alloc(vk.VkCommandBuffer, Vk_State.MAX_FRAMES_IN_FLIGH);
+
     var allocInfo = vk.VkCommandBufferAllocateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = vkState.command_pool,
         .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
+        .commandBufferCount = @intCast(vkState.command_buffer.len),
     };
-    try vkcheck(vk.vkAllocateCommandBuffers(vkState.logicalDevice, &allocInfo, &vkState.command_buffer), "Failed to create Command Pool.");
+    try vkcheck(vk.vkAllocateCommandBuffers(vkState.logicalDevice, &allocInfo, &vkState.command_buffer[0]), "Failed to create Command Pool.");
     std.debug.print("Command Buffer : {any}\n", .{vkState.command_buffer});
 }
 
