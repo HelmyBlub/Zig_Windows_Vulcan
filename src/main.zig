@@ -10,7 +10,7 @@ const vk = @cImport({
 
 // tasks:
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/00_Framebuffers.html
+//    - continue https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/01_Vertex_buffer_creation.html
 //
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
@@ -43,6 +43,8 @@ const Vk_State = struct {
     renderFinishedSemaphore: []vk.VkSemaphore = undefined,
     inFlightFence: []vk.VkFence = undefined,
     currentFrame: u16 = 0,
+    vertexBuffer: vk.VkBuffer = undefined,
+    vertexBufferMemory: vk.VkDeviceMemory = undefined,
     const MAX_FRAMES_IN_FLIGH: u16 = 2;
 };
 
@@ -50,6 +52,40 @@ const SwapChainSupportDetails = struct {
     capabilities: vk.VkSurfaceCapabilitiesKHR,
     formats: []vk.VkSurfaceFormatKHR,
     presentModes: []vk.VkPresentModeKHR,
+};
+
+const Vertex = struct {
+    pos: [2]f32,
+    color: [3]f32,
+
+    fn getBindingDescription() vk.VkVertexInputBindingDescription {
+        const bindingDescription: vk.VkVertexInputBindingDescription = .{
+            .binding = 0,
+            .stride = @sizeOf(Vertex),
+            .inputRate = vk.VK_VERTEX_INPUT_RATE_VERTEX,
+        };
+
+        return bindingDescription;
+    }
+
+    fn getAttributeDescriptions() [2]vk.VkVertexInputAttributeDescription {
+        var attributeDescriptions: [2]vk.VkVertexInputAttributeDescription = .{ undefined, undefined };
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = vk.VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].offset = @offsetOf(Vertex, "pos");
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = vk.VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = @offsetOf(Vertex, "color");
+        return attributeDescriptions;
+    }
+};
+
+var vertices: [3]Vertex = .{
+    .{ .pos = .{ -0.5, -1.0 }, .color = .{ 1.0, 0.0, 0.0 } },
+    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 } },
+    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 } },
 };
 
 pub fn main() !void {
@@ -70,13 +106,19 @@ fn mainLoop(vkState: *Vk_State) !void {
     const maxCounter = 2000;
     while (counter < maxCounter) {
         counter += 1;
+        tick();
         try drawFrame(vkState);
-        //std.time.sleep(100_000_000);
+        // std.time.sleep(100_000_000);
     }
     const timePassed = std.time.microTimestamp() - startTime;
     const fps = @divTrunc(maxCounter * 1_000_000, timePassed);
-    std.debug.print("fps: {}, timePassed: {}", .{ fps, timePassed });
+    std.debug.print("fps: {}, timePassed: {}\n", .{ fps, timePassed });
+    std.time.sleep(2_000_000_000);
     _ = vk.vkDeviceWaitIdle(vkState.logicalDevice);
+}
+
+fn tick() void {
+    vertices[0].pos[0] += 0.0005;
 }
 
 fn initWindow(vkState: *Vk_State) !void {
@@ -133,8 +175,46 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createGraphicsPipeline(vkState);
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
+    try createVertexBuffer(vkState);
     try createCommandBuffers(vkState);
     try createSyncObjects(vkState);
+}
+
+fn findMemoryType(typeFilter: u32, properties: vk.VkMemoryPropertyFlags, vkState: *Vk_State) !u32 {
+    var memProperties: vk.VkPhysicalDeviceMemoryProperties = undefined;
+    vk.vkGetPhysicalDeviceMemoryProperties(vkState.physical_device, &memProperties);
+
+    for (0..memProperties.memoryTypeCount) |i| {
+        if ((typeFilter & (@as(u32, 1) << @as(u5, @intCast(i))) != 0) and (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return @as(u32, @intCast(i));
+        }
+    }
+    return error.findMemoryType;
+}
+
+fn allocateMemory(vkState: *Vk_State) !void {
+    var memRequirements: vk.VkMemoryRequirements = undefined;
+    vk.vkGetBufferMemoryRequirements(vkState.logicalDevice, vkState.vertexBuffer, &memRequirements);
+
+    const allocInfo: vk.VkMemoryAllocateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = try findMemoryType(memRequirements.memoryTypeBits, vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vkState),
+    };
+    if (vk.vkAllocateMemory(vkState.logicalDevice, &allocInfo, null, &vkState.vertexBufferMemory) != vk.VK_SUCCESS) return error.allocateMemory;
+    if (vk.vkBindBufferMemory(vkState.logicalDevice, vkState.vertexBuffer, vkState.vertexBufferMemory, 0) != vk.VK_SUCCESS) return error.bindMemory;
+}
+
+fn createVertexBuffer(vkState: *Vk_State) !void {
+    const bufferInfo: vk.VkBufferCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = @sizeOf(Vertex) * vertices.len,
+        .usage = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    if (vk.vkCreateBuffer(vkState.logicalDevice, &bufferInfo, null, &vkState.vertexBuffer) != vk.VK_SUCCESS) return error.CreateBuffer;
+    try allocateMemory(vkState);
 }
 
 fn destroy(vkState: *Vk_State) !void {
@@ -149,6 +229,8 @@ fn destroy(vkState: *Vk_State) !void {
         vk.vkDestroySemaphore(vkState.logicalDevice, vkState.renderFinishedSemaphore[i], null);
         vk.vkDestroyFence(vkState.logicalDevice, vkState.inFlightFence[i], null);
     }
+    vk.vkDestroyBuffer(vkState.logicalDevice, vkState.vertexBuffer, null);
+    vk.vkFreeMemory(vkState.logicalDevice, vkState.vertexBufferMemory, null);
     vk.vkDestroyCommandPool(vkState.logicalDevice, vkState.command_pool, null);
     vk.vkDestroyPipeline(vkState.logicalDevice, vkState.graphics_pipeline, null);
     vk.vkDestroyPipelineLayout(vkState.logicalDevice, vkState.pipeline_layout, null);
@@ -213,7 +295,17 @@ fn createInstance(vkState: *Vk_State) !void {
     if (vk.vkCreateInstance(&instance_create_info, null, &vkState.instance) != vk.VK_SUCCESS) return error.vkCreateInstance;
 }
 
+fn setupVertexDataForGPU(vkState: *Vk_State) !void {
+    var data: ?*anyopaque = undefined;
+    if (vk.vkMapMemory(vkState.logicalDevice, vkState.vertexBufferMemory, 0, @sizeOf(Vertex) * vertices.len, 0, &data) != vk.VK_SUCCESS) return error.MapMemory;
+    const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
+    @memcpy(gpu_vertices, vertices[0..]);
+    vk.vkUnmapMemory(vkState.logicalDevice, vkState.vertexBufferMemory);
+}
+
 fn drawFrame(vkState: *Vk_State) !void {
+    try setupVertexDataForGPU(vkState);
+
     _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame], vk.VK_TRUE, std.math.maxInt(u64));
     _ = vk.vkResetFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame]);
 
@@ -303,7 +395,10 @@ fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkSta
         .extent = vkState.swapchain_info.extent,
     };
     vk.vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-    vk.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    const vertexBuffers: [1]vk.VkBuffer = .{vkState.vertexBuffer};
+    const offsets: [1]vk.VkDeviceSize = .{0};
+    vk.vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffers[0], &offsets[0]);
+    vk.vkCmdDraw(commandBuffer, vertices.len, 1, 0, 0);
     vk.vkCmdEndRenderPass(commandBuffer);
     try vkcheck(vk.vkEndCommandBuffer(commandBuffer), "Failed to End Command Buffer.");
 }
@@ -410,13 +505,14 @@ fn createGraphicsPipeline(vkState: *Vk_State) !void {
     };
 
     const shaderStages = [_]vk.VkPipelineShaderStageCreateInfo{ vertShaderStageInfo, fragShaderStageInfo };
-
+    const bindingDescription = Vertex.getBindingDescription();
+    const attributeDescriptions = Vertex.getAttributeDescriptions();
     var vertexInputInfo = vk.VkPipelineVertexInputStateCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = null,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = null,
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &bindingDescription,
+        .vertexAttributeDescriptionCount = attributeDescriptions.len,
+        .pVertexAttributeDescriptions = &attributeDescriptions,
     };
 
     var inputAssembly = vk.VkPipelineInputAssemblyStateCreateInfo{
