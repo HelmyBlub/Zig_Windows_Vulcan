@@ -2,7 +2,7 @@ const std = @import("std");
 const zigWin32 = @import("zigwin32");
 const zigWin32Everything = zigWin32.everything;
 const ui = zigWin32.ui.windows_and_messaging;
-const vulcan = @import("vulkan");
+const vulcan = @import("vulkan"); // not used, as i do not know how to get win32 plattform stuff
 const vk = @cImport({
     @cDefine("VK_USE_PLATFORM_WIN32_KHR", "1");
     @cInclude("vulkan.h");
