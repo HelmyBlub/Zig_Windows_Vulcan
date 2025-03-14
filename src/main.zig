@@ -100,7 +100,7 @@ pub fn main() !void {
 }
 
 fn mainLoop(vkState: *Vk_State) !void {
-    // keep running for 2sec
+    std.time.sleep(500_000_000);
     var counter: u32 = 0;
     const startTime = std.time.microTimestamp();
     const maxCounter = 2000;
@@ -192,29 +192,36 @@ fn findMemoryType(typeFilter: u32, properties: vk.VkMemoryPropertyFlags, vkState
     return error.findMemoryType;
 }
 
-fn allocateMemory(vkState: *Vk_State) !void {
+fn createBuffer(size: vk.VkDeviceSize, usage: vk.VkBufferUsageFlags, properties: vk.VkMemoryPropertyFlags, buffer: *vk.VkBuffer, bufferMemory: *vk.VkDeviceMemory, vkState: *Vk_State) !void {
+    const bufferInfo: vk.VkBufferCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = usage,
+        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    if (vk.vkCreateBuffer(vkState.logicalDevice, &bufferInfo, null, &buffer.*) != vk.VK_SUCCESS) return error.CreateBuffer;
     var memRequirements: vk.VkMemoryRequirements = undefined;
-    vk.vkGetBufferMemoryRequirements(vkState.logicalDevice, vkState.vertexBuffer, &memRequirements);
+    vk.vkGetBufferMemoryRequirements(vkState.logicalDevice, buffer.*, &memRequirements);
 
     const allocInfo: vk.VkMemoryAllocateInfo = .{
         .sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = memRequirements.size,
-        .memoryTypeIndex = try findMemoryType(memRequirements.memoryTypeBits, vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vkState),
+        .memoryTypeIndex = try findMemoryType(memRequirements.memoryTypeBits, properties, vkState),
     };
-    if (vk.vkAllocateMemory(vkState.logicalDevice, &allocInfo, null, &vkState.vertexBufferMemory) != vk.VK_SUCCESS) return error.allocateMemory;
-    if (vk.vkBindBufferMemory(vkState.logicalDevice, vkState.vertexBuffer, vkState.vertexBufferMemory, 0) != vk.VK_SUCCESS) return error.bindMemory;
+    if (vk.vkAllocateMemory(vkState.logicalDevice, &allocInfo, null, &bufferMemory.*) != vk.VK_SUCCESS) return error.allocateMemory;
+    if (vk.vkBindBufferMemory(vkState.logicalDevice, buffer.*, bufferMemory.*, 0) != vk.VK_SUCCESS) return error.bindMemory;
 }
 
 fn createVertexBuffer(vkState: *Vk_State) !void {
-    const bufferInfo: vk.VkBufferCreateInfo = .{
-        .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = @sizeOf(Vertex) * vertices.len,
-        .usage = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
-    };
-
-    if (vk.vkCreateBuffer(vkState.logicalDevice, &bufferInfo, null, &vkState.vertexBuffer) != vk.VK_SUCCESS) return error.CreateBuffer;
-    try allocateMemory(vkState);
+    try createBuffer(
+        @sizeOf(Vertex) * vertices.len,
+        vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &vkState.vertexBuffer,
+        &vkState.vertexBufferMemory,
+        vkState,
+    );
 }
 
 fn destroy(vkState: *Vk_State) !void {
