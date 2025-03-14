@@ -18,9 +18,6 @@ const vk = @cImport({
 const Vk_State = struct {
     window: vk.HWND = undefined,
     hInstance: vk.HINSTANCE = undefined,
-    window_width: c_int = 1280,
-    window_height: c_int = 720,
-
     instance: vk.VkInstance = undefined,
     surface: vk.VkSurfaceKHR = undefined,
     graphics_queue_family_idx: u32 = undefined,
@@ -34,7 +31,6 @@ const Vk_State = struct {
         present: vk.VkPresentModeKHR = undefined,
         extent: vk.VkExtent2D = undefined,
         images: []vk.VkImage = &.{},
-        imageformat: vk.VkFormat = undefined,
     } = undefined,
     swapchain_imageviews: []vk.VkImageView = undefined,
     render_pass: vk.VkRenderPass = undefined,
@@ -43,7 +39,6 @@ const Vk_State = struct {
     framebuffers: []vk.VkFramebuffer = undefined,
     command_pool: vk.VkCommandPool = undefined,
     command_buffer: vk.VkCommandBuffer = undefined,
-
     imageAvailableSemaphore: vk.VkSemaphore = undefined,
     renderFinishedSemaphore: vk.VkSemaphore = undefined,
     inFlightFence: vk.VkFence = undefined,
