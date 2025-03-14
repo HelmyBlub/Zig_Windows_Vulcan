@@ -54,32 +54,32 @@ const SwapChainSupportDetails = struct {
     formats: []vk.VkSurfaceFormatKHR,
     presentModes: []vk.VkPresentModeKHR,
 };
-var vk_state_global: Vk_State = .{};
 
 pub fn main() !void {
     std.debug.print("start\n", .{});
     std.debug.print("validation layer support: {}\n", .{checkValidationLayerSupport()});
-    try initWindow(&vk_state_global);
-    try initVulkan();
-    try mainLoop();
-    try destroy();
+    var vkState: Vk_State = .{};
+    try initWindow(&vkState);
+    try initVulkan(&vkState);
+    try mainLoop(&vkState);
+    try destroy(&vkState);
     std.debug.print("done\n", .{});
 }
 
-fn mainLoop() !void {
+fn mainLoop(vkState: *Vk_State) !void {
     // keep running for 2sec
     var counter: u32 = 0;
     const startTime = std.time.microTimestamp();
     const maxCounter = 2000;
     while (counter < maxCounter) {
         counter += 1;
-        try drawFrame();
+        try drawFrame(vkState);
         //std.time.sleep(100_000_000);
     }
     const timePassed = std.time.microTimestamp() - startTime;
     const fps = @divTrunc(maxCounter * 1_000_000, timePassed);
     std.debug.print("fps: {}, timePassed: {}", .{ fps, timePassed });
-    _ = vk.vkDeviceWaitIdle(vk_state_global.logicalDevice);
+    _ = vk.vkDeviceWaitIdle(vkState.logicalDevice);
 }
 
 fn initWindow(vkState: *Vk_State) !void {
@@ -125,53 +125,53 @@ fn initWindow(vkState: *Vk_State) !void {
     vkState.window = vk.FindWindowA("className", "title");
 }
 
-fn initVulkan() !void {
-    try createInstance();
-    try createSurface();
-    vk_state_global.physical_device = try pickPhysicalDevice(vk_state_global.instance);
-    try createLogicalDevice(vk_state_global.physical_device);
-    try createSwapChain();
-    try createImageViews();
-    try createRenderPass();
-    try createGraphicsPipeline();
-    try createFramebuffers();
-    try createCommandPool();
-    try createCommandBuffer();
-    try createSyncObjects();
+fn initVulkan(vkState: *Vk_State) !void {
+    try createInstance(vkState);
+    try createSurface(vkState);
+    vkState.physical_device = try pickPhysicalDevice(vkState.instance, vkState);
+    try createLogicalDevice(vkState.physical_device, vkState);
+    try createSwapChain(vkState);
+    try createImageViews(vkState);
+    try createRenderPass(vkState);
+    try createGraphicsPipeline(vkState);
+    try createFramebuffers(vkState);
+    try createCommandPool(vkState);
+    try createCommandBuffer(vkState);
+    try createSyncObjects(vkState);
 }
 
-fn destroy() !void {
-    for (vk_state_global.swapchain_imageviews) |imgvw| {
-        vk.vkDestroyImageView(vk_state_global.logicalDevice, imgvw, null);
+fn destroy(vkState: *Vk_State) !void {
+    for (vkState.swapchain_imageviews) |imgvw| {
+        vk.vkDestroyImageView(vkState.logicalDevice, imgvw, null);
     }
-    for (vk_state_global.framebuffers) |fb| {
-        vk.vkDestroyFramebuffer(vk_state_global.logicalDevice, fb, null);
+    for (vkState.framebuffers) |fb| {
+        vk.vkDestroyFramebuffer(vkState.logicalDevice, fb, null);
     }
-    vk.vkDestroySemaphore(vk_state_global.logicalDevice, vk_state_global.imageAvailableSemaphore, null);
-    vk.vkDestroySemaphore(vk_state_global.logicalDevice, vk_state_global.renderFinishedSemaphore, null);
-    vk.vkDestroyFence(vk_state_global.logicalDevice, vk_state_global.inFlightFence, null);
-    vk.vkDestroyCommandPool(vk_state_global.logicalDevice, vk_state_global.command_pool, null);
-    vk.vkDestroyPipeline(vk_state_global.logicalDevice, vk_state_global.graphics_pipeline, null);
-    vk.vkDestroyPipelineLayout(vk_state_global.logicalDevice, vk_state_global.pipeline_layout, null);
-    vk.vkDestroyRenderPass(vk_state_global.logicalDevice, vk_state_global.render_pass, null);
-    vk.vkDestroySwapchainKHR(vk_state_global.logicalDevice, vk_state_global.swapchain, null);
-    vk.vkDestroyDevice(vk_state_global.logicalDevice, null);
-    vk.vkDestroySurfaceKHR(vk_state_global.instance, vk_state_global.surface, null);
-    vk.vkDestroyInstance(vk_state_global.instance, null);
+    vk.vkDestroySemaphore(vkState.logicalDevice, vkState.imageAvailableSemaphore, null);
+    vk.vkDestroySemaphore(vkState.logicalDevice, vkState.renderFinishedSemaphore, null);
+    vk.vkDestroyFence(vkState.logicalDevice, vkState.inFlightFence, null);
+    vk.vkDestroyCommandPool(vkState.logicalDevice, vkState.command_pool, null);
+    vk.vkDestroyPipeline(vkState.logicalDevice, vkState.graphics_pipeline, null);
+    vk.vkDestroyPipelineLayout(vkState.logicalDevice, vkState.pipeline_layout, null);
+    vk.vkDestroyRenderPass(vkState.logicalDevice, vkState.render_pass, null);
+    vk.vkDestroySwapchainKHR(vkState.logicalDevice, vkState.swapchain, null);
+    vk.vkDestroyDevice(vkState.logicalDevice, null);
+    vk.vkDestroySurfaceKHR(vkState.instance, vkState.surface, null);
+    vk.vkDestroyInstance(vkState.instance, null);
 }
 
-fn createSurface() !void {
+fn createSurface(vkState: *Vk_State) !void {
     const createInfo = vk.VkWin32SurfaceCreateInfoKHR{
         .sType = vk.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
         .pNext = null,
         .flags = 0,
-        .hinstance = vk_state_global.hInstance,
-        .hwnd = vk_state_global.window,
+        .hinstance = vkState.hInstance,
+        .hwnd = vkState.window,
     };
-    if (vk.vkCreateWin32SurfaceKHR(vk_state_global.instance, &createInfo, null, &vk_state_global.surface) != vk.VK_SUCCESS) return error.vkCreateWin32;
+    if (vk.vkCreateWin32SurfaceKHR(vkState.instance, &createInfo, null, &vkState.surface) != vk.VK_SUCCESS) return error.vkCreateWin32;
 }
 
-fn createInstance() !void {
+fn createInstance(vkState: *Vk_State) !void {
     var app_info = vk.VkApplicationInfo{
         .sType = vk.VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pNext = null,
@@ -211,43 +211,43 @@ fn createInstance() !void {
     const pp_enabled_layer_names: [*][*c]const u8 = extensions_.ptr;
     instance_create_info.ppEnabledExtensionNames = pp_enabled_layer_names;
 
-    if (vk.vkCreateInstance(&instance_create_info, null, &vk_state_global.instance) != vk.VK_SUCCESS) return error.vkCreateInstance;
+    if (vk.vkCreateInstance(&instance_create_info, null, &vkState.instance) != vk.VK_SUCCESS) return error.vkCreateInstance;
 }
 
-fn drawFrame() !void {
-    _ = vk.vkWaitForFences(vk_state_global.logicalDevice, 1, &vk_state_global.inFlightFence, vk.VK_TRUE, std.math.maxInt(u64));
-    _ = vk.vkResetFences(vk_state_global.logicalDevice, 1, &vk_state_global.inFlightFence);
+fn drawFrame(vkState: *Vk_State) !void {
+    _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence, vk.VK_TRUE, std.math.maxInt(u64));
+    _ = vk.vkResetFences(vkState.logicalDevice, 1, &vkState.inFlightFence);
 
     var imageIndex: u32 = undefined;
-    _ = vk.vkAcquireNextImageKHR(vk_state_global.logicalDevice, vk_state_global.swapchain, std.math.maxInt(u64), vk_state_global.imageAvailableSemaphore, null, &imageIndex);
+    _ = vk.vkAcquireNextImageKHR(vkState.logicalDevice, vkState.swapchain, std.math.maxInt(u64), vkState.imageAvailableSemaphore, null, &imageIndex);
 
-    _ = vk.vkResetCommandBuffer(vk_state_global.command_buffer, 0);
-    try recordCommandBuffer(vk_state_global.command_buffer, imageIndex);
+    _ = vk.vkResetCommandBuffer(vkState.command_buffer, 0);
+    try recordCommandBuffer(vkState.command_buffer, imageIndex, vkState);
 
     var submitInfo = vk.VkSubmitInfo{
         .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &[_]vk.VkSemaphore{vk_state_global.imageAvailableSemaphore},
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.imageAvailableSemaphore},
         .pWaitDstStageMask = &[_]vk.VkPipelineStageFlags{vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT},
         .commandBufferCount = 1,
-        .pCommandBuffers = &vk_state_global.command_buffer,
+        .pCommandBuffers = &vkState.command_buffer,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &[_]vk.VkSemaphore{vk_state_global.renderFinishedSemaphore},
+        .pSignalSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore},
     };
-    try vkcheck(vk.vkQueueSubmit(vk_state_global.queue, 1, &submitInfo, vk_state_global.inFlightFence), "Failed to Queue Submit.");
+    try vkcheck(vk.vkQueueSubmit(vkState.queue, 1, &submitInfo, vkState.inFlightFence), "Failed to Queue Submit.");
 
     var presentInfo = vk.VkPresentInfoKHR{
         .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &[_]vk.VkSemaphore{vk_state_global.renderFinishedSemaphore},
+        .pWaitSemaphores = &[_]vk.VkSemaphore{vkState.renderFinishedSemaphore},
         .swapchainCount = 1,
-        .pSwapchains = &[_]vk.VkSwapchainKHR{vk_state_global.swapchain},
+        .pSwapchains = &[_]vk.VkSwapchainKHR{vkState.swapchain},
         .pImageIndices = &imageIndex,
     };
-    try vkcheck(vk.vkQueuePresentKHR(vk_state_global.queue, &presentInfo), "Failed to Queue Present KHR.");
+    try vkcheck(vk.vkQueuePresentKHR(vkState.queue, &presentInfo), "Failed to Queue Present KHR.");
 }
 
-fn createSyncObjects() !void {
+fn createSyncObjects(vkState: *Vk_State) !void {
     var semaphoreInfo = vk.VkSemaphoreCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     };
@@ -256,97 +256,97 @@ fn createSyncObjects() !void {
         .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
     };
 
-    if (vk.vkCreateSemaphore(vk_state_global.logicalDevice, &semaphoreInfo, null, &vk_state_global.imageAvailableSemaphore) != vk.VK_SUCCESS or
-        vk.vkCreateSemaphore(vk_state_global.logicalDevice, &semaphoreInfo, null, &vk_state_global.renderFinishedSemaphore) != vk.VK_SUCCESS or
-        vk.vkCreateFence(vk_state_global.logicalDevice, &fenceInfo, null, &vk_state_global.inFlightFence) != vk.VK_SUCCESS)
+    if (vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.imageAvailableSemaphore) != vk.VK_SUCCESS or
+        vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.renderFinishedSemaphore) != vk.VK_SUCCESS or
+        vk.vkCreateFence(vkState.logicalDevice, &fenceInfo, null, &vkState.inFlightFence) != vk.VK_SUCCESS)
     {
         std.debug.print("Failed to Create Semaphore or Create Fence.\n", .{});
         return error.FailedToCreateSyncObjects;
     }
 }
 
-fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32) !void {
+fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkState: *Vk_State) !void {
     var beginInfo = vk.VkCommandBufferBeginInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
-    try vkcheck(vk.vkBeginCommandBuffer(vk_state_global.command_buffer, &beginInfo), "Failed to Begin Command Buffer.");
+    try vkcheck(vk.vkBeginCommandBuffer(vkState.command_buffer, &beginInfo), "Failed to Begin Command Buffer.");
 
     const renderPassInfo = vk.VkRenderPassBeginInfo{
         .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = vk_state_global.render_pass,
-        .framebuffer = vk_state_global.framebuffers[imageIndex],
+        .renderPass = vkState.render_pass,
+        .framebuffer = vkState.framebuffers[imageIndex],
         .renderArea = vk.VkRect2D{
             .offset = vk.VkOffset2D{ .x = 0, .y = 0 },
-            .extent = vk_state_global.swapchain_info.extent,
+            .extent = vkState.swapchain_info.extent,
         },
         .clearValueCount = 1,
         .pClearValues = &[_]vk.VkClearValue{.{ .color = vk.VkClearColorValue{ .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 } } }},
     };
     vk.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, vk.VK_SUBPASS_CONTENTS_INLINE);
-    vk.vkCmdBindPipeline(commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, vk_state_global.graphics_pipeline);
+    vk.vkCmdBindPipeline(commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, vkState.graphics_pipeline);
     var viewport = vk.VkViewport{
         .x = 0.0,
         .y = 0.0,
-        .width = @floatFromInt(vk_state_global.swapchain_info.extent.width),
-        .height = @floatFromInt(vk_state_global.swapchain_info.extent.height),
+        .width = @floatFromInt(vkState.swapchain_info.extent.width),
+        .height = @floatFromInt(vkState.swapchain_info.extent.height),
         .minDepth = 0.0,
         .maxDepth = 1.0,
     };
     vk.vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     var scissor = vk.VkRect2D{
         .offset = vk.VkOffset2D{ .x = 0, .y = 0 },
-        .extent = vk_state_global.swapchain_info.extent,
+        .extent = vkState.swapchain_info.extent,
     };
     vk.vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     vk.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     vk.vkCmdEndRenderPass(commandBuffer);
-    try vkcheck(vk.vkEndCommandBuffer(vk_state_global.command_buffer), "Failed to End Command Buffer.");
+    try vkcheck(vk.vkEndCommandBuffer(vkState.command_buffer), "Failed to End Command Buffer.");
 }
 
-fn createCommandBuffer() !void {
+fn createCommandBuffer(vkState: *Vk_State) !void {
     var allocInfo = vk.VkCommandBufferAllocateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = vk_state_global.command_pool,
+        .commandPool = vkState.command_pool,
         .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    try vkcheck(vk.vkAllocateCommandBuffers(vk_state_global.logicalDevice, &allocInfo, &vk_state_global.command_buffer), "Failed to create Command Pool.");
-    std.debug.print("Command Buffer : {any}\n", .{vk_state_global.command_buffer});
+    try vkcheck(vk.vkAllocateCommandBuffers(vkState.logicalDevice, &allocInfo, &vkState.command_buffer), "Failed to create Command Pool.");
+    std.debug.print("Command Buffer : {any}\n", .{vkState.command_buffer});
 }
 
-fn createCommandPool() !void {
-    const queueFamilyIndices = try findQueueFamilies(vk_state_global.physical_device);
+fn createCommandPool(vkState: *Vk_State) !void {
+    const queueFamilyIndices = try findQueueFamilies(vkState.physical_device, vkState);
     var poolInfo = vk.VkCommandPoolCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = queueFamilyIndices.graphicsFamily.?,
     };
-    try vkcheck(vk.vkCreateCommandPool(vk_state_global.logicalDevice, &poolInfo, null, &vk_state_global.command_pool), "Failed to create Command Pool.");
-    std.debug.print("Command Pool : {any}\n", .{vk_state_global.command_pool});
+    try vkcheck(vk.vkCreateCommandPool(vkState.logicalDevice, &poolInfo, null, &vkState.command_pool), "Failed to create Command Pool.");
+    std.debug.print("Command Pool : {any}\n", .{vkState.command_pool});
 }
 
-fn createFramebuffers() !void {
-    vk_state_global.framebuffers = try std.heap.page_allocator.alloc(vk.VkFramebuffer, vk_state_global.swapchain_imageviews.len);
+fn createFramebuffers(vkState: *Vk_State) !void {
+    vkState.framebuffers = try std.heap.page_allocator.alloc(vk.VkFramebuffer, vkState.swapchain_imageviews.len);
 
-    for (vk_state_global.swapchain_imageviews, 0..) |imageView, i| {
+    for (vkState.swapchain_imageviews, 0..) |imageView, i| {
         var attachments = [_]vk.VkImageView{imageView};
         var framebufferInfo = vk.VkFramebufferCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .renderPass = vk_state_global.render_pass,
+            .renderPass = vkState.render_pass,
             .attachmentCount = 1,
             .pAttachments = &attachments,
-            .width = vk_state_global.swapchain_info.extent.width,
-            .height = vk_state_global.swapchain_info.extent.height,
+            .width = vkState.swapchain_info.extent.width,
+            .height = vkState.swapchain_info.extent.height,
             .layers = 1,
         };
-        try vkcheck(vk.vkCreateFramebuffer(vk_state_global.logicalDevice, &framebufferInfo, null, &vk_state_global.framebuffers[i]), "Failed to create Framebuffer.");
-        std.debug.print("Framebuffer Created : {any}\n", .{vk_state_global.pipeline_layout});
+        try vkcheck(vk.vkCreateFramebuffer(vkState.logicalDevice, &framebufferInfo, null, &vkState.framebuffers[i]), "Failed to create Framebuffer.");
+        std.debug.print("Framebuffer Created : {any}\n", .{vkState.pipeline_layout});
     }
 }
 
-fn createRenderPass() !void {
+fn createRenderPass(vkState: *Vk_State) !void {
     var colorAttachment = vk.VkAttachmentDescription{
-        .format = vk_state_global.swapchain_info.format.format,
+        .format = vkState.swapchain_info.format.format,
         .samples = vk.VK_SAMPLE_COUNT_1_BIT,
         .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
@@ -376,17 +376,17 @@ fn createRenderPass() !void {
         .dependencyCount = 0,
         .pDependencies = null,
     };
-    try vkcheck(vk.vkCreateRenderPass(vk_state_global.logicalDevice, &renderPassInfo, null, &vk_state_global.render_pass), "Failed to create Render Pass.");
-    std.debug.print("Render Pass Created : {any}\n", .{vk_state_global.render_pass});
+    try vkcheck(vk.vkCreateRenderPass(vkState.logicalDevice, &renderPassInfo, null, &vkState.render_pass), "Failed to create Render Pass.");
+    std.debug.print("Render Pass Created : {any}\n", .{vkState.render_pass});
 }
 
-fn createGraphicsPipeline() !void {
+fn createGraphicsPipeline(vkState: *Vk_State) !void {
     const vertShaderCode = try readFile("src/vert.spv");
     const fragShaderCode = try readFile("src/frag.spv");
-    const vertShaderModule = try createShaderModule(vertShaderCode);
-    defer vk.vkDestroyShaderModule(vk_state_global.logicalDevice, vertShaderModule, null);
-    const fragShaderModule = try createShaderModule(fragShaderCode);
-    defer vk.vkDestroyShaderModule(vk_state_global.logicalDevice, fragShaderModule, null);
+    const vertShaderModule = try createShaderModule(vertShaderCode, vkState);
+    defer vk.vkDestroyShaderModule(vkState.logicalDevice, vertShaderModule, null);
+    const fragShaderModule = try createShaderModule(fragShaderCode, vkState);
+    defer vk.vkDestroyShaderModule(vkState.logicalDevice, fragShaderModule, null);
 
     const vertShaderStageInfo = vk.VkPipelineShaderStageCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -482,8 +482,8 @@ fn createGraphicsPipeline() !void {
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = null,
     };
-    try vkcheck(vk.vkCreatePipelineLayout(vk_state_global.logicalDevice, &pipelineLayoutInfo, null, &vk_state_global.pipeline_layout), "Failed to create pipeline layout.");
-    std.debug.print("Pipeline Layout Created : {any}\n", .{vk_state_global.pipeline_layout});
+    try vkcheck(vk.vkCreatePipelineLayout(vkState.logicalDevice, &pipelineLayoutInfo, null, &vkState.pipeline_layout), "Failed to create pipeline layout.");
+    std.debug.print("Pipeline Layout Created : {any}\n", .{vkState.pipeline_layout});
 
     var pipelineInfo = vk.VkGraphicsPipelineCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -496,36 +496,36 @@ fn createGraphicsPipeline() !void {
         .pMultisampleState = &multisampling,
         .pColorBlendState = &colorBlending,
         .pDynamicState = &dynamicState,
-        .layout = vk_state_global.pipeline_layout,
-        .renderPass = vk_state_global.render_pass,
+        .layout = vkState.pipeline_layout,
+        .renderPass = vkState.render_pass,
         .subpass = 0,
         .basePipelineHandle = null,
         .pNext = null,
     };
-    try vkcheck(vk.vkCreateGraphicsPipelines(vk_state_global.logicalDevice, null, 1, &pipelineInfo, null, &vk_state_global.graphics_pipeline), "Failed to create graphics pipeline.");
-    std.debug.print("Graphics Pipeline Created : {any}\n", .{vk_state_global.pipeline_layout});
+    try vkcheck(vk.vkCreateGraphicsPipelines(vkState.logicalDevice, null, 1, &pipelineInfo, null, &vkState.graphics_pipeline), "Failed to create graphics pipeline.");
+    std.debug.print("Graphics Pipeline Created : {any}\n", .{vkState.pipeline_layout});
 }
 
-fn createShaderModule(code: []const u8) !vk.VkShaderModule {
+fn createShaderModule(code: []const u8, vkState: *Vk_State) !vk.VkShaderModule {
     var createInfo = vk.VkShaderModuleCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = code.len,
         .pCode = @alignCast(@ptrCast(code.ptr)),
     };
     var shaderModule: vk.VkShaderModule = undefined; //std.mem.zeroes(vk.VkShaderModule)
-    try vkcheck(vk.vkCreateShaderModule(vk_state_global.logicalDevice, &createInfo, null, &shaderModule), "Failed to create Shader Module.");
+    try vkcheck(vk.vkCreateShaderModule(vkState.logicalDevice, &createInfo, null, &shaderModule), "Failed to create Shader Module.");
     std.debug.print("Shader Module Created : {any}\n", .{shaderModule});
     return shaderModule;
 }
 
-fn createImageViews() !void {
-    vk_state_global.swapchain_imageviews = try std.heap.page_allocator.alloc(vk.VkImageView, vk_state_global.swapchain_info.images.len);
-    for (vk_state_global.swapchain_info.images, 0..) |image, i| {
+fn createImageViews(vkState: *Vk_State) !void {
+    vkState.swapchain_imageviews = try std.heap.page_allocator.alloc(vk.VkImageView, vkState.swapchain_info.images.len);
+    for (vkState.swapchain_info.images, 0..) |image, i| {
         var createInfo = vk.VkImageViewCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = image,
             .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
-            .format = vk_state_global.swapchain_info.format.format,
+            .format = vkState.swapchain_info.format.format,
             .components = vk.VkComponentMapping{
                 .r = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
                 .g = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -540,39 +540,39 @@ fn createImageViews() !void {
                 .layerCount = 1,
             },
         };
-        try vkcheck(vk.vkCreateImageView(vk_state_global.logicalDevice, &createInfo, null, &vk_state_global.swapchain_imageviews[i]), "Failed to create swapchain image views.");
-        std.debug.print("Swapchain ImageView Created : {any}\n", .{vk_state_global.swapchain_imageviews[i]});
+        try vkcheck(vk.vkCreateImageView(vkState.logicalDevice, &createInfo, null, &vkState.swapchain_imageviews[i]), "Failed to create swapchain image views.");
+        std.debug.print("Swapchain ImageView Created : {any}\n", .{vkState.swapchain_imageviews[i]});
     }
 }
 
-fn createSwapChain() !void {
-    vk_state_global.swapchain_info.support = try querySwapChainSupport();
-    vk_state_global.swapchain_info.format = chooseSwapSurfaceFormat(vk_state_global.swapchain_info.support.formats);
-    vk_state_global.swapchain_info.present = chooseSwapPresentMode(vk_state_global.swapchain_info.support.presentModes);
-    vk_state_global.swapchain_info.extent = chooseSwapExtent(vk_state_global.swapchain_info.support.capabilities);
+fn createSwapChain(vkState: *Vk_State) !void {
+    vkState.swapchain_info.support = try querySwapChainSupport(vkState);
+    vkState.swapchain_info.format = chooseSwapSurfaceFormat(vkState.swapchain_info.support.formats);
+    vkState.swapchain_info.present = chooseSwapPresentMode(vkState.swapchain_info.support.presentModes);
+    vkState.swapchain_info.extent = chooseSwapExtent(vkState.swapchain_info.support.capabilities, vkState);
 
-    var imageCount = vk_state_global.swapchain_info.support.capabilities.minImageCount + 1;
-    if (vk_state_global.swapchain_info.support.capabilities.maxImageCount > 0 and imageCount > vk_state_global.swapchain_info.support.capabilities.maxImageCount) {
-        imageCount = vk_state_global.swapchain_info.support.capabilities.maxImageCount;
+    var imageCount = vkState.swapchain_info.support.capabilities.minImageCount + 1;
+    if (vkState.swapchain_info.support.capabilities.maxImageCount > 0 and imageCount > vkState.swapchain_info.support.capabilities.maxImageCount) {
+        imageCount = vkState.swapchain_info.support.capabilities.maxImageCount;
     }
 
     var createInfo = vk.VkSwapchainCreateInfoKHR{
         .sType = vk.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .surface = vk_state_global.surface,
+        .surface = vkState.surface,
         .minImageCount = imageCount,
-        .imageFormat = vk_state_global.swapchain_info.format.format,
-        .imageColorSpace = vk_state_global.swapchain_info.format.colorSpace,
-        .imageExtent = vk_state_global.swapchain_info.extent,
+        .imageFormat = vkState.swapchain_info.format.format,
+        .imageColorSpace = vkState.swapchain_info.format.colorSpace,
+        .imageExtent = vkState.swapchain_info.extent,
         .imageArrayLayers = 1,
         .imageUsage = vk.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .preTransform = vk_state_global.swapchain_info.support.capabilities.currentTransform,
+        .preTransform = vkState.swapchain_info.support.capabilities.currentTransform,
         .compositeAlpha = vk.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = vk_state_global.swapchain_info.present,
+        .presentMode = vkState.swapchain_info.present,
         .clipped = vk.VK_TRUE,
         .oldSwapchain = null,
     };
 
-    const indices = try findQueueFamilies(vk_state_global.physical_device);
+    const indices = try findQueueFamilies(vkState.physical_device, vkState);
     const queueFamilyIndices = [_]u32{ indices.graphicsFamily.?, indices.presentFamily.? };
     if (indices.graphicsFamily != indices.presentFamily) {
         createInfo.imageSharingMode = vk.VK_SHARING_MODE_CONCURRENT;
@@ -582,15 +582,15 @@ fn createSwapChain() !void {
         createInfo.imageSharingMode = vk.VK_SHARING_MODE_EXCLUSIVE;
     }
 
-    try vkcheck(vk.vkCreateSwapchainKHR(vk_state_global.logicalDevice, &createInfo, null, &vk_state_global.swapchain), "Failed to create swapchain KHR");
-    std.debug.print("Swapchain KHR Created : {any}\n", .{vk_state_global.logicalDevice});
+    try vkcheck(vk.vkCreateSwapchainKHR(vkState.logicalDevice, &createInfo, null, &vkState.swapchain), "Failed to create swapchain KHR");
+    std.debug.print("Swapchain KHR Created : {any}\n", .{vkState.logicalDevice});
 
-    _ = vk.vkGetSwapchainImagesKHR(vk_state_global.logicalDevice, vk_state_global.swapchain, &imageCount, null);
-    vk_state_global.swapchain_info.images = try std.heap.page_allocator.alloc(vk.VkImage, imageCount);
-    _ = vk.vkGetSwapchainImagesKHR(vk_state_global.logicalDevice, vk_state_global.swapchain, &imageCount, vk_state_global.swapchain_info.images.ptr);
+    _ = vk.vkGetSwapchainImagesKHR(vkState.logicalDevice, vkState.swapchain, &imageCount, null);
+    vkState.swapchain_info.images = try std.heap.page_allocator.alloc(vk.VkImage, imageCount);
+    _ = vk.vkGetSwapchainImagesKHR(vkState.logicalDevice, vkState.swapchain, &imageCount, vkState.swapchain_info.images.ptr);
 }
 
-fn querySwapChainSupport() !SwapChainSupportDetails {
+fn querySwapChainSupport(vkState: *Vk_State) !SwapChainSupportDetails {
     var details = SwapChainSupportDetails{
         .capabilities = undefined,
         .formats = &.{},
@@ -599,16 +599,16 @@ fn querySwapChainSupport() !SwapChainSupportDetails {
 
     var formatCount: u32 = 0;
     var presentModeCount: u32 = 0;
-    _ = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk_state_global.physical_device, vk_state_global.surface, &details.capabilities);
-    _ = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(vk_state_global.physical_device, vk_state_global.surface, &formatCount, null);
+    _ = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkState.physical_device, vkState.surface, &details.capabilities);
+    _ = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(vkState.physical_device, vkState.surface, &formatCount, null);
     if (formatCount > 0) {
         details.formats = try std.heap.page_allocator.alloc(vk.VkSurfaceFormatKHR, formatCount);
-        _ = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(vk_state_global.physical_device, vk_state_global.surface, &formatCount, details.formats.ptr);
+        _ = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(vkState.physical_device, vkState.surface, &formatCount, details.formats.ptr);
     }
-    _ = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(vk_state_global.physical_device, vk_state_global.surface, &presentModeCount, null);
+    _ = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(vkState.physical_device, vkState.surface, &presentModeCount, null);
     if (presentModeCount > 0) {
         details.presentModes = try std.heap.page_allocator.alloc(vk.VkPresentModeKHR, presentModeCount);
-        _ = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(vk_state_global.physical_device, vk_state_global.surface, &presentModeCount, details.presentModes.ptr);
+        _ = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(vkState.physical_device, vkState.surface, &presentModeCount, details.presentModes.ptr);
     }
     return details;
 }
@@ -631,12 +631,12 @@ fn chooseSwapPresentMode(present_modes: []const vk.VkPresentModeKHR) vk.VkPresen
     return vk.VK_PRESENT_MODE_FIFO_KHR;
 }
 
-fn chooseSwapExtent(capabilities: vk.VkSurfaceCapabilitiesKHR) vk.VkExtent2D {
+fn chooseSwapExtent(capabilities: vk.VkSurfaceCapabilitiesKHR, vkState: *Vk_State) vk.VkExtent2D {
     if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
         return capabilities.currentExtent;
     } else {
         var rect: vk.RECT = undefined;
-        _ = vk.GetClientRect(vk_state_global.window, &rect);
+        _ = vk.GetClientRect(vkState.window, &rect);
         var actual_extent = vk.VkExtent2D{
             .width = @intCast(rect.right - rect.left),
             .height = @intCast(rect.bottom - rect.top),
@@ -678,10 +678,10 @@ pub fn checkValidationLayerSupport() bool {
     return true;
 }
 
-fn createLogicalDevice(physical_device: vk.VkPhysicalDevice) !void {
+fn createLogicalDevice(physical_device: vk.VkPhysicalDevice, vkState: *Vk_State) !void {
     var queue_create_info = vk.VkDeviceQueueCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = vk_state_global.graphics_queue_family_idx,
+        .queueFamilyIndex = vkState.graphics_queue_family_idx,
         .queueCount = 1,
         .pQueuePriorities = &[_]f32{1.0},
     };
@@ -696,10 +696,10 @@ fn createLogicalDevice(physical_device: vk.VkPhysicalDevice) !void {
     };
     device_create_info.enabledLayerCount = 1;
     device_create_info.ppEnabledLayerNames = &validation_layers;
-    try vkcheck(vk.vkCreateDevice(physical_device, &device_create_info, null, &vk_state_global.logicalDevice), "Failed to create logical device");
-    std.debug.print("Logical Device Created : {any}\n", .{vk_state_global.logicalDevice});
-    vk.vkGetDeviceQueue(vk_state_global.logicalDevice, vk_state_global.graphics_queue_family_idx, 0, &vk_state_global.queue);
-    std.debug.print("Queue Obtained : {any}\n", .{vk_state_global.queue});
+    try vkcheck(vk.vkCreateDevice(physical_device, &device_create_info, null, &vkState.logicalDevice), "Failed to create logical device");
+    std.debug.print("Logical Device Created : {any}\n", .{vkState.logicalDevice});
+    vk.vkGetDeviceQueue(vkState.logicalDevice, vkState.graphics_queue_family_idx, 0, &vkState.queue);
+    std.debug.print("Queue Obtained : {any}\n", .{vkState.queue});
 }
 
 fn wndProc(hwnd: zigWin32.foundation.HWND, msg: u32, wParam: std.os.windows.WPARAM, lParam: std.os.windows.LPARAM) callconv(std.builtin.CallingConvention.winapi) std.os.windows.LRESULT {
@@ -707,7 +707,7 @@ fn wndProc(hwnd: zigWin32.foundation.HWND, msg: u32, wParam: std.os.windows.WPAR
     return ui.DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-fn pickPhysicalDevice(instance: vk.VkInstance) !vk.VkPhysicalDevice {
+fn pickPhysicalDevice(instance: vk.VkInstance, vkState: *Vk_State) !vk.VkPhysicalDevice {
     var device_count: u32 = 0;
     try vkcheck(vk.vkEnumeratePhysicalDevices(instance, &device_count, null), "Failed to enumerate physical devices");
     if (device_count == 0) {
@@ -719,19 +719,19 @@ fn pickPhysicalDevice(instance: vk.VkInstance) !vk.VkPhysicalDevice {
     try vkcheck(vk.vkEnumeratePhysicalDevices(instance, &device_count, devices.ptr), "Failed to enumerate physical devices");
 
     for (devices) |device| {
-        if (try isDeviceSuitable(device)) {
+        if (try isDeviceSuitable(device, vkState)) {
             return device;
         }
     }
     return error.NoSuitableGPU;
 }
-fn isDeviceSuitable(device: vk.VkPhysicalDevice) !bool {
-    const indices: QueueFamilyIndices = try findQueueFamilies(device);
-    vk_state_global.graphics_queue_family_idx = indices.graphicsFamily.?;
+fn isDeviceSuitable(device: vk.VkPhysicalDevice, vkState: *Vk_State) !bool {
+    const indices: QueueFamilyIndices = try findQueueFamilies(device, vkState);
+    vkState.graphics_queue_family_idx = indices.graphicsFamily.?;
     return indices.isComplete();
 }
 
-fn findQueueFamilies(device: vk.VkPhysicalDevice) !QueueFamilyIndices {
+fn findQueueFamilies(device: vk.VkPhysicalDevice, vkState: *Vk_State) !QueueFamilyIndices {
     var indices = QueueFamilyIndices{
         .graphicsFamily = null,
         .presentFamily = null,
@@ -748,7 +748,7 @@ fn findQueueFamilies(device: vk.VkPhysicalDevice) !QueueFamilyIndices {
             indices.graphicsFamily = @intCast(i);
         }
         var presentSupport: vk.VkBool32 = vk.VK_FALSE;
-        _ = vk.vkGetPhysicalDeviceSurfaceSupportKHR(device, @intCast(i), vk_state_global.surface, &presentSupport);
+        _ = vk.vkGetPhysicalDeviceSurfaceSupportKHR(device, @intCast(i), vkState.surface, &presentSupport);
         if (presentSupport == vk.VK_TRUE) {
             indices.presentFamily = @intCast(i);
         }
