@@ -10,7 +10,7 @@ const vk = @cImport({
 
 // tasks:
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/01_Vertex_buffer_creation.html
+//    - continue https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html
 //
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
