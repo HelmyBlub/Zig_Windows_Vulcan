@@ -9,8 +9,10 @@ const vk = @cImport({
 });
 
 // tasks:
+//  figure out why drawing triangle fails
+//      -added code of repo i copied from. This version works. Why does mine not work?
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.html
+//    - continue https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/03_Drawing/00_Framebuffers.html
 //       - winAPI and vulcan.h only https://github.com/DarknessFX/zig_workbench/blob/fd6bae8f9236782f92759e64eecbbcc46fad83d6/BaseVulkan/main_vulkanw32.zig#L142
 // draw anything in window
 //
@@ -160,18 +162,12 @@ fn initWindow() !void {
     try createSwapChain();
     defer vk.vkDestroySwapchainKHR(vk_state.logicalDevice, vk_state.swapchain, null);
     try createImageViews();
-    for (vk_state.swapchain_imageviews) |imgvw| {
-        defer vk.vkDestroyImageView(vk_state.logicalDevice, imgvw, null);
-    }
     try createRenderPass();
     defer vk.vkDestroyRenderPass(vk_state.logicalDevice, vk_state.render_pass, null);
     try createGraphicsPipeline();
     defer vk.vkDestroyPipelineLayout(vk_state.logicalDevice, vk_state.pipeline_layout, null);
     defer vk.vkDestroyPipeline(vk_state.logicalDevice, vk_state.graphics_pipeline, null);
     try createFramebuffers();
-    for (vk_state.framebuffers) |fb| {
-        defer vk.vkDestroyFramebuffer(vk_state.logicalDevice, fb, null);
-    }
     try createCommandPool();
     defer vk.vkDestroyCommandPool(vk_state.logicalDevice, vk_state.command_pool, null);
     try createCommandBuffer();
@@ -188,6 +184,12 @@ fn initWindow() !void {
         std.time.sleep(100_000_000);
     }
     _ = vk.vkDeviceWaitIdle(vk_state.logicalDevice);
+    for (vk_state.swapchain_imageviews) |imgvw| {
+        vk.vkDestroyImageView(vk_state.logicalDevice, imgvw, null);
+    }
+    for (vk_state.framebuffers) |fb| {
+        vk.vkDestroyFramebuffer(vk_state.logicalDevice, fb, null);
+    }
 }
 
 fn drawFrame() !void {
