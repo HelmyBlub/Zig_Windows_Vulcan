@@ -10,8 +10,8 @@ const vk = @cImport({
 
 // tasks:
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html
-//
+//    - continue hhttps://docs.vulkan.org/tutorial/latest/06_Texture_mapping/00_Images.html
+//      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
 
@@ -45,7 +45,17 @@ const Vk_State = struct {
     currentFrame: u16 = 0,
     vertexBuffer: vk.VkBuffer = undefined,
     vertexBufferMemory: vk.VkDeviceMemory = undefined,
-    const MAX_FRAMES_IN_FLIGH: u16 = 2;
+    descriptorSetLayout: vk.VkDescriptorSetLayout = undefined,
+    uniformBuffers: []vk.VkBuffer = undefined,
+    uniformBuffersMemory: []vk.VkDeviceMemory = undefined,
+    uniformBuffersMapped: []?*anyopaque = undefined,
+    descriptorPool: vk.VkDescriptorPool = undefined,
+    descriptorSets: []vk.VkDescriptorSet = undefined,
+    const MAX_FRAMES_IN_FLIGHT: u16 = 2;
+};
+
+const UniformBufferObject = struct {
+    transform: [4][4]f32,
 };
 
 const SwapChainSupportDetails = struct {
@@ -108,7 +118,7 @@ fn mainLoop(vkState: *Vk_State) !void {
         counter += 1;
         tick();
         try drawFrame(vkState);
-        // std.time.sleep(100_000_000);
+        // std.time.sleep(10_000_000);
     }
     const timePassed = std.time.microTimestamp() - startTime;
     const fps = @divTrunc(maxCounter * 1_000_000, timePassed);
@@ -172,12 +182,95 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createSwapChain(vkState);
     try createImageViews(vkState);
     try createRenderPass(vkState);
+    try createDescriptorSetLayout(vkState);
     try createGraphicsPipeline(vkState);
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
     try createVertexBuffer(vkState);
+    try createUniformBuffers(vkState);
+    try createDescriptorPool(vkState);
+    try createDescriptorSets(vkState);
     try createCommandBuffers(vkState);
     try createSyncObjects(vkState);
+}
+
+fn createDescriptorSets(vkState: *Vk_State) !void {
+    // std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+    const layouts = [_]vk.VkDescriptorSetLayout{vkState.descriptorSetLayout} ** Vk_State.MAX_FRAMES_IN_FLIGHT;
+    const allocInfo: vk.VkDescriptorSetAllocateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = vkState.descriptorPool,
+        .descriptorSetCount = Vk_State.MAX_FRAMES_IN_FLIGHT,
+        .pSetLayouts = &layouts,
+    };
+    vkState.descriptorSets = try std.heap.page_allocator.alloc(vk.VkDescriptorSet, Vk_State.MAX_FRAMES_IN_FLIGHT);
+    if (vk.vkAllocateDescriptorSets(vkState.logicalDevice, &allocInfo, @ptrCast(vkState.descriptorSets)) != vk.VK_SUCCESS) return error.allocateDescriptorSets;
+
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
+        const bufferInfo: vk.VkDescriptorBufferInfo = .{
+            .buffer = vkState.uniformBuffers[i],
+            .offset = 0,
+            .range = @sizeOf(UniformBufferObject),
+        };
+
+        const descriptorWrite: vk.VkWriteDescriptorSet = .{
+            .sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = vkState.descriptorSets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorType = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .pBufferInfo = &bufferInfo,
+            .pImageInfo = null,
+            .pTexelBufferView = null,
+        };
+        vk.vkUpdateDescriptorSets(vkState.logicalDevice, 1, &descriptorWrite, 0, null);
+    }
+}
+
+fn createDescriptorPool(vkState: *Vk_State) !void {
+    const poolSize: vk.VkDescriptorPoolSize = .{
+        .type = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = Vk_State.MAX_FRAMES_IN_FLIGHT,
+    };
+
+    const poolInfo: vk.VkDescriptorPoolCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1,
+        .pPoolSizes = &poolSize,
+        .maxSets = Vk_State.MAX_FRAMES_IN_FLIGHT,
+    };
+    if (vk.vkCreateDescriptorPool(vkState.logicalDevice, &poolInfo, null, &vkState.descriptorPool) != vk.VK_SUCCESS) return error.descriptionPool;
+}
+
+fn createUniformBuffers(vkState: *Vk_State) !void {
+    const bufferSize: vk.VkDeviceSize = @sizeOf(UniformBufferObject);
+
+    vkState.uniformBuffers = try std.heap.page_allocator.alloc(vk.VkBuffer, Vk_State.MAX_FRAMES_IN_FLIGHT);
+    vkState.uniformBuffersMemory = try std.heap.page_allocator.alloc(vk.VkDeviceMemory, Vk_State.MAX_FRAMES_IN_FLIGHT);
+    vkState.uniformBuffersMapped = try std.heap.page_allocator.alloc(?*anyopaque, Vk_State.MAX_FRAMES_IN_FLIGHT);
+
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
+        try createBuffer(bufferSize, vk.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkState.uniformBuffers[i], &vkState.uniformBuffersMemory[i], vkState);
+        if (vk.vkMapMemory(vkState.logicalDevice, vkState.uniformBuffersMemory[i], 0, bufferSize, 0, &vkState.uniformBuffersMapped[i]) != vk.VK_SUCCESS) return error.uniformMapMemory;
+    }
+}
+
+fn createDescriptorSetLayout(vkState: *Vk_State) !void {
+    const uboLayoutBinding: vk.VkDescriptorSetLayoutBinding = .{
+        .binding = 0,
+        .descriptorType = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = vk.VK_SHADER_STAGE_VERTEX_BIT,
+    };
+
+    const layoutInfo: vk.VkDescriptorSetLayoutCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &uboLayoutBinding,
+    };
+
+    if (vk.vkCreateDescriptorSetLayout(vkState.logicalDevice, &layoutInfo, null, &vkState.descriptorSetLayout) != vk.VK_SUCCESS) return error.createDescriptorSetLayout;
 }
 
 fn findMemoryType(typeFilter: u32, properties: vk.VkMemoryPropertyFlags, vkState: *Vk_State) !u32 {
@@ -231,11 +324,18 @@ fn destroy(vkState: *Vk_State) !void {
     for (vkState.framebuffers) |fb| {
         vk.vkDestroyFramebuffer(vkState.logicalDevice, fb, null);
     }
-    for (0..Vk_State.MAX_FRAMES_IN_FLIGH) |i| {
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
         vk.vkDestroySemaphore(vkState.logicalDevice, vkState.imageAvailableSemaphore[i], null);
         vk.vkDestroySemaphore(vkState.logicalDevice, vkState.renderFinishedSemaphore[i], null);
         vk.vkDestroyFence(vkState.logicalDevice, vkState.inFlightFence[i], null);
     }
+
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
+        vk.vkDestroyBuffer(vkState.logicalDevice, vkState.uniformBuffers[i], null);
+        vk.vkFreeMemory(vkState.logicalDevice, vkState.uniformBuffersMemory[i], null);
+    }
+    vk.vkDestroyDescriptorPool(vkState.logicalDevice, vkState.descriptorPool, null);
+    vk.vkDestroyDescriptorSetLayout(vkState.logicalDevice, vkState.descriptorSetLayout, null);
     vk.vkDestroyBuffer(vkState.logicalDevice, vkState.vertexBuffer, null);
     vk.vkFreeMemory(vkState.logicalDevice, vkState.vertexBufferMemory, null);
     vk.vkDestroyCommandPool(vkState.logicalDevice, vkState.command_pool, null);
@@ -310,8 +410,29 @@ fn setupVertexDataForGPU(vkState: *Vk_State) !void {
     vk.vkUnmapMemory(vkState.logicalDevice, vkState.vertexBufferMemory);
 }
 
+fn updateUniformBuffer(vkState: *Vk_State) !void {
+    const change: f32 = @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / 1000.0;
+    var ubo: UniformBufferObject = .{
+        .transform = .{
+            .{ 1, change, 0.0, 0.0 },
+            .{ -change, 1, 0.0, 0.0 },
+            .{ 0.0, 0.0, 1.0, 0.0 },
+            .{ 0.0, 0.0, 0.0, 1.0 },
+        },
+    };
+    if (vkState.uniformBuffersMapped[vkState.currentFrame]) |data| {
+        @memcpy(
+            @as([*]u8, @ptrCast(data))[0..@sizeOf(UniformBufferObject)],
+            @as([*]u8, @ptrCast(&ubo)),
+        );
+    }
+    // const gpu_uniform: [*]UniformBufferObject = @ptrCast(@alignCast(vkState.uniformBuffersMapped[vkState.currentFrame]));
+    // @memcpy(gpu_uniform, @as([*]u8, @ptrCast(&ubo)));
+}
+
 fn drawFrame(vkState: *Vk_State) !void {
     try setupVertexDataForGPU(vkState);
+    try updateUniformBuffer(vkState);
 
     _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame], vk.VK_TRUE, std.math.maxInt(u64));
     _ = vk.vkResetFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame]);
@@ -343,7 +464,7 @@ fn drawFrame(vkState: *Vk_State) !void {
         .pImageIndices = &imageIndex,
     };
     try vkcheck(vk.vkQueuePresentKHR(vkState.queue, &presentInfo), "Failed to Queue Present KHR.");
-    vkState.currentFrame = (vkState.currentFrame + 1) % Vk_State.MAX_FRAMES_IN_FLIGH;
+    vkState.currentFrame = (vkState.currentFrame + 1) % Vk_State.MAX_FRAMES_IN_FLIGHT;
 }
 
 fn createSyncObjects(vkState: *Vk_State) !void {
@@ -354,11 +475,11 @@ fn createSyncObjects(vkState: *Vk_State) !void {
         .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
     };
-    vkState.imageAvailableSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGH);
-    vkState.renderFinishedSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGH);
-    vkState.inFlightFence = try std.heap.page_allocator.alloc(vk.VkFence, Vk_State.MAX_FRAMES_IN_FLIGH);
+    vkState.imageAvailableSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGHT);
+    vkState.renderFinishedSemaphore = try std.heap.page_allocator.alloc(vk.VkSemaphore, Vk_State.MAX_FRAMES_IN_FLIGHT);
+    vkState.inFlightFence = try std.heap.page_allocator.alloc(vk.VkFence, Vk_State.MAX_FRAMES_IN_FLIGHT);
 
-    for (0..Vk_State.MAX_FRAMES_IN_FLIGH) |i| {
+    for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
         if (vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.imageAvailableSemaphore[i]) != vk.VK_SUCCESS or
             vk.vkCreateSemaphore(vkState.logicalDevice, &semaphoreInfo, null, &vkState.renderFinishedSemaphore[i]) != vk.VK_SUCCESS or
             vk.vkCreateFence(vkState.logicalDevice, &fenceInfo, null, &vkState.inFlightFence[i]) != vk.VK_SUCCESS)
@@ -405,13 +526,23 @@ fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkSta
     const vertexBuffers: [1]vk.VkBuffer = .{vkState.vertexBuffer};
     const offsets: [1]vk.VkDeviceSize = .{0};
     vk.vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffers[0], &offsets[0]);
+    vk.vkCmdBindDescriptorSets(
+        commandBuffer,
+        vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkState.pipeline_layout,
+        0,
+        1,
+        &vkState.descriptorSets[vkState.currentFrame],
+        0,
+        null,
+    );
     vk.vkCmdDraw(commandBuffer, vertices.len, 1, 0, 0);
     vk.vkCmdEndRenderPass(commandBuffer);
     try vkcheck(vk.vkEndCommandBuffer(commandBuffer), "Failed to End Command Buffer.");
 }
 
 fn createCommandBuffers(vkState: *Vk_State) !void {
-    vkState.command_buffer = try std.heap.page_allocator.alloc(vk.VkCommandBuffer, Vk_State.MAX_FRAMES_IN_FLIGH);
+    vkState.command_buffer = try std.heap.page_allocator.alloc(vk.VkCommandBuffer, Vk_State.MAX_FRAMES_IN_FLIGHT);
 
     var allocInfo = vk.VkCommandBufferAllocateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -587,8 +718,8 @@ fn createGraphicsPipeline(vkState: *Vk_State) !void {
 
     var pipelineLayoutInfo = vk.VkPipelineLayoutCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 0,
-        .pSetLayouts = null,
+        .setLayoutCount = 1,
+        .pSetLayouts = &vkState.descriptorSetLayout,
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = null,
     };
