@@ -7,10 +7,12 @@ const vk = @cImport({
     @cDefine("VK_USE_PLATFORM_WIN32_KHR", "1");
     @cInclude("vulkan.h");
 });
+const zigimg = @import("zigimg");
 
 // tasks:
+// - continue: build not working with some unknown error with zigimg library. Try different version?
 // follow vulcan tutorial:
-//    - continue hhttps://docs.vulkan.org/tutorial/latest/06_Texture_mapping/00_Images.html
+//    - continue https://docs.vulkan.org/tutorial/latest/06_Texture_mapping/01_Image_view_and_sampler.html
 //      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
@@ -51,6 +53,8 @@ const Vk_State = struct {
     uniformBuffersMapped: []?*anyopaque = undefined,
     descriptorPool: vk.VkDescriptorPool = undefined,
     descriptorSets: []vk.VkDescriptorSet = undefined,
+    textureImage: vk.VkImage = undefined,
+    textureImageMemory: vk.VkDeviceMemory = undefined,
     const MAX_FRAMES_IN_FLIGHT: u16 = 2;
 };
 
@@ -186,6 +190,7 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createGraphicsPipeline(vkState);
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
+    try createTextureImage(vkState);
     try createVertexBuffer(vkState);
     try createUniformBuffers(vkState);
     try createDescriptorPool(vkState);
@@ -194,8 +199,204 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createSyncObjects(vkState);
 }
 
+fn createTextureImage(vkState: *Vk_State) !void {
+    var image = try zigimg.Image.fromFilePath(std.heap.page_allocator, "src/test.bmp");
+    defer image.deinit();
+    try image.convert(.rgba32);
+
+    var stagingBuffer: vk.VkBuffer = undefined;
+    var stagingBufferMemory: vk.VkDeviceMemory = undefined;
+    try createBuffer(
+        image.imageByteSize(),
+        vk.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &stagingBuffer,
+        &stagingBufferMemory,
+        vkState,
+    );
+
+    var data: ?*anyopaque = undefined;
+    if (vk.vkMapMemory(vkState.logicalDevice, stagingBufferMemory, 0, image.imageByteSize(), 0, &data) != vk.VK_SUCCESS) return error.MapMemory;
+    @memcpy(
+        @as([*]u8, @ptrCast(data))[0..image.imageByteSize()],
+        @as([*]u8, @ptrCast(image.pixels.asBytes())),
+    );
+    vk.vkUnmapMemory(vkState.logicalDevice, stagingBufferMemory);
+    const imageWidth: u32 = @intCast(image.width);
+    const imageHeight: u32 = @intCast(image.height);
+    try createImage(
+        imageWidth,
+        imageHeight,
+        vk.VK_FORMAT_R8G8B8A8_SRGB,
+        vk.VK_IMAGE_TILING_OPTIMAL,
+        vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT | vk.VK_IMAGE_USAGE_SAMPLED_BIT,
+        vk.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        &vkState.textureImage,
+        &vkState.textureImageMemory,
+        vkState,
+    );
+
+    try transitionImageLayout(vkState.textureImage, vk.VK_IMAGE_LAYOUT_UNDEFINED, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vkState);
+    try copyBufferToImage(stagingBuffer, vkState.textureImage, imageWidth, imageHeight, vkState);
+    try transitionImageLayout(vkState.textureImage, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, vkState);
+    vk.vkDestroyBuffer(vkState.logicalDevice, stagingBuffer, null);
+    vk.vkFreeMemory(vkState.logicalDevice, stagingBufferMemory, null);
+}
+
+fn copyBufferToImage(buffer: vk.VkBuffer, image: vk.VkImage, width: u32, height: u32, vkState: *Vk_State) !void {
+    const commandBuffer: vk.VkCommandBuffer = try beginSingleTimeCommands(vkState);
+    const region: vk.VkBufferImageCopy = .{
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = .{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+        .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
+        .imageExtent = .{ .width = width, .height = height, .depth = 1 },
+    };
+    vk.vkCmdCopyBufferToImage(
+        commandBuffer,
+        buffer,
+        image,
+        vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region,
+    );
+
+    try endSingleTimeCommands(commandBuffer, vkState);
+}
+
+fn transitionImageLayout(image: vk.VkImage, oldLayout: vk.VkImageLayout, newLayout: vk.VkImageLayout, vkState: *Vk_State) !void {
+    const commandBuffer = try beginSingleTimeCommands(vkState);
+
+    var barrier: vk.VkImageMemoryBarrier = .{
+        .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .oldLayout = oldLayout,
+        .newLayout = newLayout,
+        .srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = .{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+        .srcAccessMask = 0, // TODO
+        .dstAccessMask = 0, // TODO
+    };
+
+    var sourceStage: vk.VkPipelineStageFlags = undefined;
+    var destinationStage: vk.VkPipelineStageFlags = undefined;
+
+    if (oldLayout == vk.VK_IMAGE_LAYOUT_UNDEFINED and newLayout == vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = vk.VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL and newLayout == vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = vk.VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = vk.VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        return error.unsuportetLayoutTransition;
+    }
+
+    vk.vkCmdPipelineBarrier(
+        commandBuffer,
+        0,
+        0,
+        0,
+        0,
+        null,
+        0,
+        null,
+        1,
+        &barrier,
+    );
+    try endSingleTimeCommands(commandBuffer, vkState);
+}
+
+fn beginSingleTimeCommands(vkState: *Vk_State) !vk.VkCommandBuffer {
+    const allocInfo: vk.VkCommandBufferAllocateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandPool = vkState.command_pool,
+        .commandBufferCount = 1,
+    };
+
+    var commandBuffer: vk.VkCommandBuffer = undefined;
+    _ = vk.vkAllocateCommandBuffers(vkState.logicalDevice, &allocInfo, &commandBuffer);
+
+    const beginInfo: vk.VkCommandBufferBeginInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = vk.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    _ = vk.vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    return commandBuffer;
+}
+
+fn endSingleTimeCommands(commandBuffer: vk.VkCommandBuffer, vkState: *Vk_State) !void {
+    _ = vk.vkEndCommandBuffer(commandBuffer);
+
+    const submitInfo: vk.VkSubmitInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+    };
+
+    _ = vk.vkQueueSubmit(vkState.queue, 1, &submitInfo, null);
+    _ = vk.vkQueueWaitIdle(vkState.queue);
+
+    vk.vkFreeCommandBuffers(vkState.logicalDevice, vkState.command_pool, 1, &commandBuffer);
+}
+
+fn createImage(width: u32, height: u32, format: vk.VkFormat, tiling: vk.VkImageTiling, usage: vk.VkImageUsageFlags, properties: vk.VkMemoryPropertyFlags, image: *vk.VkImage, imageMemory: *vk.VkDeviceMemory, vkState: *Vk_State) !void {
+    const imageInfo: vk.VkImageCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = vk.VK_IMAGE_TYPE_2D,
+        .extent = .{
+            .width = width,
+            .height = height,
+            .depth = 1,
+        },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .format = format,
+        .tiling = tiling,
+        .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
+        .usage = usage,
+        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
+        .samples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .flags = 0,
+    };
+
+    if (vk.vkCreateImage(vkState.logicalDevice, &imageInfo, null, image) != vk.VK_SUCCESS) return error.createImage;
+
+    var memRequirements: vk.VkMemoryRequirements = undefined;
+    vk.vkGetImageMemoryRequirements(vkState.logicalDevice, image.*, &memRequirements);
+
+    const allocInfo: vk.VkMemoryAllocateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = try findMemoryType(memRequirements.memoryTypeBits, properties, vkState),
+    };
+
+    if (vk.vkAllocateMemory(vkState.logicalDevice, &allocInfo, null, imageMemory) != vk.VK_SUCCESS) return error.vkAllocateMemory;
+    if (vk.vkBindImageMemory(vkState.logicalDevice, image.*, imageMemory.*, 0) != vk.VK_SUCCESS) return error.bindImageMemory;
+}
+
 fn createDescriptorSets(vkState: *Vk_State) !void {
-    // std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
     const layouts = [_]vk.VkDescriptorSetLayout{vkState.descriptorSetLayout} ** Vk_State.MAX_FRAMES_IN_FLIGHT;
     const allocInfo: vk.VkDescriptorSetAllocateInfo = .{
         .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -251,7 +452,14 @@ fn createUniformBuffers(vkState: *Vk_State) !void {
     vkState.uniformBuffersMapped = try std.heap.page_allocator.alloc(?*anyopaque, Vk_State.MAX_FRAMES_IN_FLIGHT);
 
     for (0..Vk_State.MAX_FRAMES_IN_FLIGHT) |i| {
-        try createBuffer(bufferSize, vk.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkState.uniformBuffers[i], &vkState.uniformBuffersMemory[i], vkState);
+        try createBuffer(
+            bufferSize,
+            vk.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &vkState.uniformBuffers[i],
+            &vkState.uniformBuffersMemory[i],
+            vkState,
+        );
         if (vk.vkMapMemory(vkState.logicalDevice, vkState.uniformBuffersMemory[i], 0, bufferSize, 0, &vkState.uniformBuffersMapped[i]) != vk.VK_SUCCESS) return error.uniformMapMemory;
     }
 }

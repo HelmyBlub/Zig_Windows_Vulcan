@@ -43,4 +43,11 @@ pub fn build(b: *std.Build) void {
         .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
+
+    const zigimg_dependency = b.dependency("zigimg", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("zigimg", zigimg_dependency.module("zigimg"));
 }
