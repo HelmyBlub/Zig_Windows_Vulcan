@@ -10,8 +10,9 @@ const vk = @cImport({
 const zigimg = @import("zigimg");
 
 // tasks:
+// - problem: image alpha channel not working
 // follow vulcan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/06_Texture_mapping/01_Image_view_and_sampler.html
+//    - continue https://docs.vulkan.org/tutorial/latest/07_Depth_buffering.html
 //      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
@@ -105,15 +106,12 @@ const Vertex = struct {
     }
 };
 
-var vertices: [3]Vertex = .{
-    .{ .pos = .{ -0.5, -1.0 }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.0, 0.0 } },
-    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 }, .texCoord = .{ 1.0, 1.0 } },
-    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 }, .texCoord = .{ 0.0, 1.0 } },
-};
+var vertices: []Vertex = undefined;
 
 pub fn main() !void {
     std.debug.print("start\n", .{});
     std.debug.print("validation layer support: {}\n", .{checkValidationLayerSupport()});
+    try setupVertices();
     var vkState: Vk_State = .{};
     try initWindow(&vkState);
     try initVulkan(&vkState);
@@ -122,11 +120,34 @@ pub fn main() !void {
     std.debug.print("done\n", .{});
 }
 
+fn setupVertices() !void {
+    const rows = 10;
+    const columns = 10;
+    const triangleCount = rows * columns;
+    const vertexCount = triangleCount * 3;
+    const triangleSize = 0.1;
+    vertices = try std.heap.page_allocator.alloc(Vertex, vertexCount);
+    const stepSizeX: f32 = 2.0 / @as(f32, @floatFromInt(columns));
+    const stepSizeY: f32 = 2.0 / @as(f32, @floatFromInt(rows));
+    for (0..columns) |x| {
+        const currX = -1.0 + stepSizeX * @as(f32, @floatFromInt(x));
+        for (0..rows) |y| {
+            const currY = -1.0 + stepSizeY * @as(f32, @floatFromInt(y));
+            vertices[(x * rows + y) * 3] = .{ .pos = .{ currX, currY }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.3, 0.3 } };
+            vertices[(x * rows + y) * 3 + 1] = .{ .pos = .{ currX + triangleSize, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.7, 0.7 } };
+            vertices[(x * rows + y) * 3 + 2] = .{ .pos = .{ currX, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.3, 0.7 } };
+        }
+    }
+    std.debug.print("verticeCount: {}\n", .{vertices.len});
+}
+
 fn mainLoop(vkState: *Vk_State) !void {
     std.time.sleep(500_000_000);
     var counter: u32 = 0;
     const startTime = std.time.microTimestamp();
     const maxCounter = 2000;
+    try setupVertexDataForGPU(vkState);
+
     while (counter < maxCounter) {
         counter += 1;
         tick();
@@ -141,7 +162,7 @@ fn mainLoop(vkState: *Vk_State) !void {
 }
 
 fn tick() void {
-    vertices[0].pos[0] += 0.0005;
+    // vertices[0].pos[0] += 0.0005;
 }
 
 fn initWindow(vkState: *Vk_State) !void {
@@ -217,9 +238,9 @@ fn createTextureSampler(vkState: *Vk_State) !void {
         .sType = vk.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter = vk.VK_FILTER_LINEAR,
         .minFilter = vk.VK_FILTER_LINEAR,
-        .addressModeU = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeV = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeW = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeU = vk.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .addressModeV = vk.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .addressModeW = vk.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
         .anisotropyEnable = vk.VK_TRUE,
         .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
         .borderColor = vk.VK_BORDER_COLOR_INT_OPAQUE_BLACK,
@@ -259,7 +280,7 @@ fn createImageView(image: vk.VkImage, format: vk.VkFormat, vkState: *Vk_State) !
 }
 
 fn createTextureImage(vkState: *Vk_State) !void {
-    var image = try zigimg.Image.fromFilePath(std.heap.page_allocator, "src/test.bmp");
+    var image = try zigimg.Image.fromFilePath(std.heap.page_allocator, "src/test.png");
     defer image.deinit();
     try image.convert(.rgba32);
 
@@ -713,13 +734,13 @@ fn setupVertexDataForGPU(vkState: *Vk_State) !void {
 }
 
 fn updateUniformBuffer(vkState: *Vk_State) !void {
-    const change: f32 = @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 1000))) / 1000.0;
+    const change: f32 = @as(f32, @floatFromInt(@mod(std.time.milliTimestamp(), 10000))) / 10000.0;
     var ubo: UniformBufferObject = .{
         .transform = .{
-            .{ 1, change, 0.0, 0.0 },
-            .{ -change, 1, 0.0, 0.0 },
-            .{ 0.0, 0.0, 1.0, 0.0 },
-            .{ 0.0, 0.0, 0.0, 1.0 },
+            .{ 1.0, change, 0.0, 0.0 },
+            .{ -change, 1.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 1, 0.0 },
+            .{ 0.0, 0.0, 0.0, 1 },
         },
     };
     if (vkState.uniformBuffersMapped[vkState.currentFrame]) |data| {
@@ -733,7 +754,6 @@ fn updateUniformBuffer(vkState: *Vk_State) !void {
 }
 
 fn drawFrame(vkState: *Vk_State) !void {
-    try setupVertexDataForGPU(vkState);
     try updateUniformBuffer(vkState);
 
     _ = vk.vkWaitForFences(vkState.logicalDevice, 1, &vkState.inFlightFence[vkState.currentFrame], vk.VK_TRUE, std.math.maxInt(u64));
@@ -838,7 +858,8 @@ fn recordCommandBuffer(commandBuffer: vk.VkCommandBuffer, imageIndex: u32, vkSta
         0,
         null,
     );
-    vk.vkCmdDraw(commandBuffer, vertices.len, 1, 0, 0);
+
+    vk.vkCmdDraw(commandBuffer, @intCast(vertices.len), 1, 0, 0);
     vk.vkCmdEndRenderPass(commandBuffer);
     try vkcheck(vk.vkEndCommandBuffer(commandBuffer), "Failed to End Command Buffer.");
 }
