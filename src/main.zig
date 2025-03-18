@@ -10,12 +10,14 @@ const vk = @cImport({
 const zigimg = @import("zigimg");
 
 // tasks:
-// - continue: build not working with some unknown error with zigimg library. Try different version?
 // follow vulcan tutorial:
 //    - continue https://docs.vulkan.org/tutorial/latest/06_Texture_mapping/01_Image_view_and_sampler.html
 //      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulcan so i can compare to my sdl version
+//
+// - problem: zigimg not working with zig 0.14 and loading images
+//    - currently fixed by manually changing files only locally without git behind it
 
 const Vk_State = struct {
     window: vk.HWND = undefined,
@@ -55,6 +57,8 @@ const Vk_State = struct {
     descriptorSets: []vk.VkDescriptorSet = undefined,
     textureImage: vk.VkImage = undefined,
     textureImageMemory: vk.VkDeviceMemory = undefined,
+    textureImageView: vk.VkImageView = undefined,
+    textureSampler: vk.VkSampler = undefined,
     const MAX_FRAMES_IN_FLIGHT: u16 = 2;
 };
 
@@ -71,6 +75,7 @@ const SwapChainSupportDetails = struct {
 const Vertex = struct {
     pos: [2]f32,
     color: [3]f32,
+    texCoord: [2]f32,
 
     fn getBindingDescription() vk.VkVertexInputBindingDescription {
         const bindingDescription: vk.VkVertexInputBindingDescription = .{
@@ -82,8 +87,8 @@ const Vertex = struct {
         return bindingDescription;
     }
 
-    fn getAttributeDescriptions() [2]vk.VkVertexInputAttributeDescription {
-        var attributeDescriptions: [2]vk.VkVertexInputAttributeDescription = .{ undefined, undefined };
+    fn getAttributeDescriptions() [3]vk.VkVertexInputAttributeDescription {
+        var attributeDescriptions: [3]vk.VkVertexInputAttributeDescription = .{ undefined, undefined, undefined };
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
         attributeDescriptions[0].format = vk.VK_FORMAT_R32G32_SFLOAT;
@@ -92,14 +97,18 @@ const Vertex = struct {
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = vk.VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[1].offset = @offsetOf(Vertex, "color");
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = vk.VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset = @offsetOf(Vertex, "texCoord");
         return attributeDescriptions;
     }
 };
 
 var vertices: [3]Vertex = .{
-    .{ .pos = .{ -0.5, -1.0 }, .color = .{ 1.0, 0.0, 0.0 } },
-    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 } },
-    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 } },
+    .{ .pos = .{ -0.5, -1.0 }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.0, 0.0 } },
+    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 }, .texCoord = .{ 1.0, 1.0 } },
+    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 }, .texCoord = .{ 0.0, 1.0 } },
 };
 
 pub fn main() !void {
@@ -191,12 +200,62 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
     try createTextureImage(vkState);
+    try createTextureImageView(vkState);
+    try createTextureSampler(vkState);
     try createVertexBuffer(vkState);
     try createUniformBuffers(vkState);
     try createDescriptorPool(vkState);
     try createDescriptorSets(vkState);
     try createCommandBuffers(vkState);
     try createSyncObjects(vkState);
+}
+
+fn createTextureSampler(vkState: *Vk_State) !void {
+    var properties: vk.VkPhysicalDeviceProperties = undefined;
+    vk.vkGetPhysicalDeviceProperties(vkState.physical_device, &properties);
+    const samplerInfo: vk.VkSamplerCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = vk.VK_FILTER_LINEAR,
+        .minFilter = vk.VK_FILTER_LINEAR,
+        .addressModeU = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = vk.VK_TRUE,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+        .borderColor = vk.VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = vk.VK_FALSE,
+        .compareEnable = vk.VK_FALSE,
+        .compareOp = vk.VK_COMPARE_OP_ALWAYS,
+        .mipmapMode = vk.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .mipLodBias = 0.0,
+        .minLod = 0.0,
+        .maxLod = 0.0,
+    };
+    if (vk.vkCreateSampler(vkState.logicalDevice, &samplerInfo, null, &vkState.textureSampler) != vk.VK_SUCCESS) return error.createSampler;
+}
+
+fn createTextureImageView(vkState: *Vk_State) !void {
+    vkState.textureImageView = try createImageView(vkState.textureImage, vk.VK_FORMAT_R8G8B8A8_SRGB, vkState);
+}
+
+fn createImageView(image: vk.VkImage, format: vk.VkFormat, vkState: *Vk_State) !vk.VkImageView {
+    const viewInfo: vk.VkImageViewCreateInfo = .{
+        .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image,
+        .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = .{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+
+    var imageView: vk.VkImageView = undefined;
+    if (vk.vkCreateImageView(vkState.logicalDevice, &viewInfo, null, &imageView) != vk.VK_SUCCESS) return error.createImageView;
+    return imageView;
 }
 
 fn createTextureImage(vkState: *Vk_State) !void {
@@ -413,32 +472,53 @@ fn createDescriptorSets(vkState: *Vk_State) !void {
             .offset = 0,
             .range = @sizeOf(UniformBufferObject),
         };
-
-        const descriptorWrite: vk.VkWriteDescriptorSet = .{
-            .sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = vkState.descriptorSets[i],
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorType = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .pBufferInfo = &bufferInfo,
-            .pImageInfo = null,
-            .pTexelBufferView = null,
+        const imageInfo: vk.VkDescriptorImageInfo = .{
+            .imageLayout = vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .imageView = vkState.textureImageView,
+            .sampler = vkState.textureSampler,
         };
-        vk.vkUpdateDescriptorSets(vkState.logicalDevice, 1, &descriptorWrite, 0, null);
+        const descriptorWrites = [_]vk.VkWriteDescriptorSet{
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = vkState.descriptorSets[i],
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorType = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .pBufferInfo = &bufferInfo,
+                .pImageInfo = null,
+                .pTexelBufferView = null,
+            },
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = vkState.descriptorSets[i],
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorType = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .pImageInfo = &imageInfo,
+            },
+        };
+        vk.vkUpdateDescriptorSets(vkState.logicalDevice, descriptorWrites.len, &descriptorWrites, 0, null);
     }
 }
 
 fn createDescriptorPool(vkState: *Vk_State) !void {
-    const poolSize: vk.VkDescriptorPoolSize = .{
-        .type = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = Vk_State.MAX_FRAMES_IN_FLIGHT,
+    const poolSizes = [_]vk.VkDescriptorPoolSize{
+        .{
+            .type = vk.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = Vk_State.MAX_FRAMES_IN_FLIGHT,
+        },
+        .{
+            .type = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = Vk_State.MAX_FRAMES_IN_FLIGHT,
+        },
     };
 
     const poolInfo: vk.VkDescriptorPoolCreateInfo = .{
         .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = 1,
-        .pPoolSizes = &poolSize,
+        .poolSizeCount = poolSizes.len,
+        .pPoolSizes = &poolSizes,
         .maxSets = Vk_State.MAX_FRAMES_IN_FLIGHT,
     };
     if (vk.vkCreateDescriptorPool(vkState.logicalDevice, &poolInfo, null, &vkState.descriptorPool) != vk.VK_SUCCESS) return error.descriptionPool;
@@ -471,11 +551,20 @@ fn createDescriptorSetLayout(vkState: *Vk_State) !void {
         .descriptorCount = 1,
         .stageFlags = vk.VK_SHADER_STAGE_VERTEX_BIT,
     };
+    const samplerLayoutBinding: vk.VkDescriptorSetLayoutBinding = .{
+        .binding = 1,
+        .descriptorCount = 1,
+        .descriptorType = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImmutableSamplers = null,
+        .stageFlags = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+    };
+
+    const bindings = [_]vk.VkDescriptorSetLayoutBinding{ uboLayoutBinding, samplerLayoutBinding };
 
     const layoutInfo: vk.VkDescriptorSetLayoutCreateInfo = .{
         .sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &uboLayoutBinding,
+        .bindingCount = bindings.len,
+        .pBindings = &bindings,
     };
 
     if (vk.vkCreateDescriptorSetLayout(vkState.logicalDevice, &layoutInfo, null, &vkState.descriptorSetLayout) != vk.VK_SUCCESS) return error.createDescriptorSetLayout;
@@ -542,6 +631,11 @@ fn destroy(vkState: *Vk_State) !void {
         vk.vkDestroyBuffer(vkState.logicalDevice, vkState.uniformBuffers[i], null);
         vk.vkFreeMemory(vkState.logicalDevice, vkState.uniformBuffersMemory[i], null);
     }
+    vk.vkDestroySampler(vkState.logicalDevice, vkState.textureSampler, null);
+    vk.vkDestroyImageView(vkState.logicalDevice, vkState.textureImageView, null);
+    vk.vkDestroyImage(vkState.logicalDevice, vkState.textureImage, null);
+    vk.vkFreeMemory(vkState.logicalDevice, vkState.textureImageMemory, null);
+
     vk.vkDestroyDescriptorPool(vkState.logicalDevice, vkState.descriptorPool, null);
     vk.vkDestroyDescriptorSetLayout(vkState.logicalDevice, vkState.descriptorSetLayout, null);
     vk.vkDestroyBuffer(vkState.logicalDevice, vkState.vertexBuffer, null);
@@ -970,26 +1064,7 @@ fn createShaderModule(code: []const u8, vkState: *Vk_State) !vk.VkShaderModule {
 fn createImageViews(vkState: *Vk_State) !void {
     vkState.swapchain_imageviews = try std.heap.page_allocator.alloc(vk.VkImageView, vkState.swapchain_info.images.len);
     for (vkState.swapchain_info.images, 0..) |image, i| {
-        var createInfo = vk.VkImageViewCreateInfo{
-            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = image,
-            .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
-            .format = vkState.swapchain_info.format.format,
-            .components = vk.VkComponentMapping{
-                .r = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .g = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .a = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
-            },
-            .subresourceRange = vk.VkImageSubresourceRange{
-                .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-        try vkcheck(vk.vkCreateImageView(vkState.logicalDevice, &createInfo, null, &vkState.swapchain_imageviews[i]), "Failed to create swapchain image views.");
+        vkState.swapchain_imageviews[i] = try createImageView(image, vkState.swapchain_info.format.format, vkState);
         std.debug.print("Swapchain ImageView Created : {any}\n", .{vkState.swapchain_imageviews[i]});
     }
 }
@@ -1134,7 +1209,9 @@ fn createLogicalDevice(physical_device: vk.VkPhysicalDevice, vkState: *Vk_State)
         .queueCount = 1,
         .pQueuePriorities = &[_]f32{1.0},
     };
-    var device_features = vk.VkPhysicalDeviceFeatures{};
+    var device_features = vk.VkPhysicalDeviceFeatures{
+        .samplerAnisotropy = vk.VK_TRUE,
+    };
     var device_create_info = vk.VkDeviceCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pQueueCreateInfos = &queue_create_info,
@@ -1177,7 +1254,11 @@ fn pickPhysicalDevice(instance: vk.VkInstance, vkState: *Vk_State) !vk.VkPhysica
 fn isDeviceSuitable(device: vk.VkPhysicalDevice, vkState: *Vk_State) !bool {
     const indices: QueueFamilyIndices = try findQueueFamilies(device, vkState);
     vkState.graphics_queue_family_idx = indices.graphicsFamily.?;
-    return indices.isComplete();
+
+    var supportedFeatures: vk.VkPhysicalDeviceFeatures = undefined;
+    vk.vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+
+    return indices.isComplete() and supportedFeatures.samplerAnisotropy != 0;
 }
 
 fn findQueueFamilies(device: vk.VkPhysicalDevice, vkState: *Vk_State) !QueueFamilyIndices {
