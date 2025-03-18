@@ -12,10 +12,12 @@ const zigimg = @import("zigimg");
 // tasks:
 // - problem: image alpha channel not working
 // follow vulkan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/07_Depth_buffering.html
+//    - continue https://docs.vulkan.org/tutorial/latest/10_Multisampling.html
 //      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulkan so i can compare to my sdl version
+//              - 10_000 iamges at 2_000 fps
+//              - 1_000_000 images smaller scaled than before in 120 fps
 //
 // - problem: zigimg not working with zig 0.14 and loading images
 //    - currently fixed by manually changing files only locally without git behind it
@@ -122,8 +124,8 @@ pub fn main() !void {
 }
 
 fn setupVertices() !void {
-    const rows = 10;
-    const columns = 10;
+    const rows = 100;
+    const columns = 100;
     const triangleCount = rows * columns;
     const vertexCount = triangleCount * 3;
     const triangleSize = 0.1;
