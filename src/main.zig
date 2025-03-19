@@ -10,19 +10,15 @@ const vk = @cImport({
 const zigimg = @import("zigimg");
 
 // tasks:
-// - problem: image alpha channel not working
-// next goal: draw 10_000 images to screen
-//           - want to know some limit with vulkan so i can compare to my sdl version
-//              - 10_000 iamges at 2_000 fps
-//                  - with multisampling: 1_000 fps
-//                  - multisampling + blending = 600fps (but hard to compare as painting dogs was changed for this case)
-//              - 1_000_000 images smaller scaled than before in 120 fps
 // open questions: differnce between this vulkan project and my sdl version seems to high?
 //      - currently factor over 100x more performant seems to much
 //      - can i use sdl in a more performant way
 //
-// - problem: zigimg not working with zig 0.14 and loading images
-//    - currently fixed by manually changing files only locally without git behind it
+// some performance metrics for my system:
+//  - 10_000 images at 2_000 fps
+//      - with multisampling: 1_000 fps
+//      - multisampling + blending = 600fps (but hard to compare as painting dogs was changed for this case)
+//  - 1_000_000 images smaller scaled than before with multisampling and blending in 120 fps
 
 const Vk_State = struct {
     window: vk.HWND = undefined,
