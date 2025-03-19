@@ -11,9 +11,6 @@ const zigimg = @import("zigimg");
 
 // tasks:
 // - problem: image alpha channel not working
-// follow vulkan tutorial:
-//    - continue https://docs.vulkan.org/tutorial/latest/10_Multisampling.html
-//      - someone elses repo as refrence: https://github.com/JamDeezCodes/zig-vulkan-tutorial/blob/bac607a08c2c72e404bec6de3053f50afc7f64ed/src/main.zig#L2468
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulkan so i can compare to my sdl version
 //              - 10_000 iamges at 2_000 fps
