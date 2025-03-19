@@ -17,7 +17,10 @@ const zigimg = @import("zigimg");
 // next goal: draw 10_000 images to screen
 //           - want to know some limit with vulkan so i can compare to my sdl version
 //              - 10_000 iamges at 2_000 fps
+//                  - with multisampling: 1_000 fps
 //              - 1_000_000 images smaller scaled than before in 120 fps
+// open questions: differnce between this vulkan project and my sdl version seems to high? currently factor over 100x more performant seems to much
+//      - can i use sdl in a more performant way
 //
 // - problem: zigimg not working with zig 0.14 and loading images
 //    - currently fixed by manually changing files only locally without git behind it
@@ -63,6 +66,10 @@ const Vk_State = struct {
     textureImageMemory: vk.VkDeviceMemory = undefined,
     textureImageView: vk.VkImageView = undefined,
     textureSampler: vk.VkSampler = undefined,
+    msaaSamples: vk.VkSampleCountFlagBits = vk.VK_SAMPLE_COUNT_1_BIT,
+    colorImage: vk.VkImage = undefined,
+    colorImageMemory: vk.VkDeviceMemory = undefined,
+    colorImageView: vk.VkImageView = undefined,
     const MAX_FRAMES_IN_FLIGHT: u16 = 2;
 };
 
@@ -221,6 +228,7 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createRenderPass(vkState);
     try createDescriptorSetLayout(vkState);
     try createGraphicsPipeline(vkState);
+    try createColorResources(vkState);
     try createFramebuffers(vkState);
     try createCommandPool(vkState);
     try createTextureImage(vkState);
@@ -232,6 +240,52 @@ fn initVulkan(vkState: *Vk_State) !void {
     try createDescriptorSets(vkState);
     try createCommandBuffers(vkState);
     try createSyncObjects(vkState);
+}
+
+fn createColorResources(vkState: *Vk_State) !void {
+    const colorFormat: vk.VkFormat = vkState.swapchain_info.format.format;
+
+    try createImage(
+        vkState.swapchain_info.extent.width,
+        vkState.swapchain_info.extent.height,
+        1,
+        vkState.msaaSamples,
+        colorFormat,
+        vk.VK_IMAGE_TILING_OPTIMAL,
+        vk.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | vk.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        vk.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        &vkState.colorImage,
+        &vkState.colorImageMemory,
+        vkState,
+    );
+    vkState.colorImageView = try createImageView(vkState.colorImage, colorFormat, 1, vkState);
+}
+
+fn getMaxUsableSampleCount(physicalDevice: vk.VkPhysicalDevice) vk.VkSampleCountFlagBits {
+    var physicalDeviceProperties: vk.VkPhysicalDeviceProperties = undefined;
+    vk.vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
+
+    const counts: vk.VkSampleCountFlags = physicalDeviceProperties.limits.framebufferColorSampleCounts;
+    if ((counts & vk.VK_SAMPLE_COUNT_64_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_64_BIT;
+    }
+    if ((counts & vk.VK_SAMPLE_COUNT_32_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_32_BIT;
+    }
+    if ((counts & vk.VK_SAMPLE_COUNT_16_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_16_BIT;
+    }
+    if ((counts & vk.VK_SAMPLE_COUNT_8_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_8_BIT;
+    }
+    if ((counts & vk.VK_SAMPLE_COUNT_4_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_4_BIT;
+    }
+    if ((counts & vk.VK_SAMPLE_COUNT_2_BIT) != 0) {
+        return vk.VK_SAMPLE_COUNT_2_BIT;
+    }
+
+    return vk.VK_SAMPLE_COUNT_1_BIT;
 }
 
 fn createTextureSampler(vkState: *Vk_State) !void {
@@ -420,6 +474,7 @@ fn createTextureImage(vkState: *Vk_State) !void {
         imageWidth,
         imageHeight,
         vkState.mipLevels,
+        vk.VK_SAMPLE_COUNT_1_BIT,
         vk.VK_FORMAT_R8G8B8A8_SRGB,
         vk.VK_IMAGE_TILING_OPTIMAL,
         vk.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT | vk.VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -555,7 +610,7 @@ fn endSingleTimeCommands(commandBuffer: vk.VkCommandBuffer, vkState: *Vk_State) 
     vk.vkFreeCommandBuffers(vkState.logicalDevice, vkState.command_pool, 1, &commandBuffer);
 }
 
-fn createImage(width: u32, height: u32, mipLevels: u32, format: vk.VkFormat, tiling: vk.VkImageTiling, usage: vk.VkImageUsageFlags, properties: vk.VkMemoryPropertyFlags, image: *vk.VkImage, imageMemory: *vk.VkDeviceMemory, vkState: *Vk_State) !void {
+fn createImage(width: u32, height: u32, mipLevels: u32, numSamples: vk.VkSampleCountFlagBits, format: vk.VkFormat, tiling: vk.VkImageTiling, usage: vk.VkImageUsageFlags, properties: vk.VkMemoryPropertyFlags, image: *vk.VkImage, imageMemory: *vk.VkDeviceMemory, vkState: *Vk_State) !void {
     const imageInfo: vk.VkImageCreateInfo = .{
         .sType = vk.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = vk.VK_IMAGE_TYPE_2D,
@@ -571,7 +626,7 @@ fn createImage(width: u32, height: u32, mipLevels: u32, format: vk.VkFormat, til
         .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
         .usage = usage,
         .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
-        .samples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .samples = numSamples,
         .flags = 0,
     };
 
@@ -750,6 +805,9 @@ fn createVertexBuffer(vkState: *Vk_State) !void {
 }
 
 fn destroy(vkState: *Vk_State) !void {
+    vk.vkDestroyImageView(vkState.logicalDevice, vkState.colorImageView, null);
+    vk.vkDestroyImage(vkState.logicalDevice, vkState.colorImage, null);
+    vk.vkFreeMemory(vkState.logicalDevice, vkState.colorImageMemory, null);
     for (vkState.swapchain_imageviews) |imgvw| {
         vk.vkDestroyImageView(vkState.logicalDevice, imgvw, null);
     }
@@ -1006,11 +1064,11 @@ fn createFramebuffers(vkState: *Vk_State) !void {
     vkState.framebuffers = try std.heap.page_allocator.alloc(vk.VkFramebuffer, vkState.swapchain_imageviews.len);
 
     for (vkState.swapchain_imageviews, 0..) |imageView, i| {
-        var attachments = [_]vk.VkImageView{imageView};
+        var attachments = [_]vk.VkImageView{ vkState.colorImageView, imageView };
         var framebufferInfo = vk.VkFramebufferCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = vkState.render_pass,
-            .attachmentCount = 1,
+            .attachmentCount = attachments.len,
             .pAttachments = &attachments,
             .width = vkState.swapchain_info.extent.width,
             .height = vkState.swapchain_info.extent.height,
@@ -1022,19 +1080,33 @@ fn createFramebuffers(vkState: *Vk_State) !void {
 }
 
 fn createRenderPass(vkState: *Vk_State) !void {
-    var colorAttachment = vk.VkAttachmentDescription{
+    const colorAttachment = vk.VkAttachmentDescription{
+        .format = vkState.swapchain_info.format.format,
+        .samples = vkState.msaaSamples,
+        .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    var colorAttachmentRef = vk.VkAttachmentReference{
+        .attachment = 0,
+        .layout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    const colorAttachmentResolve: vk.VkAttachmentDescription = .{
         .format = vkState.swapchain_info.format.format,
         .samples = vk.VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp = vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
-
-    var colorAttachmentRef = vk.VkAttachmentReference{
-        .attachment = 0,
+    var colorAttachmentResolveRef = vk.VkAttachmentReference{
+        .attachment = 1,
         .layout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
 
@@ -1042,12 +1114,14 @@ fn createRenderPass(vkState: *Vk_State) !void {
         .pipelineBindPoint = vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachmentRef,
+        .pResolveAttachments = &colorAttachmentResolveRef,
     };
 
+    const attachments = [_]vk.VkAttachmentDescription{ colorAttachment, colorAttachmentResolve };
     var renderPassInfo = vk.VkRenderPassCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &colorAttachment,
+        .attachmentCount = attachments.len,
+        .pAttachments = &attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = 0,
@@ -1121,7 +1195,7 @@ fn createGraphicsPipeline(vkState: *Vk_State) !void {
     var multisampling = vk.VkPipelineMultisampleStateCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .sampleShadingEnable = vk.VK_FALSE,
-        .rasterizationSamples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .rasterizationSamples = vkState.msaaSamples,
         .minSampleShading = 1.0,
         .pSampleMask = null,
         .alphaToCoverageEnable = vk.VK_FALSE,
@@ -1381,6 +1455,7 @@ fn pickPhysicalDevice(instance: vk.VkInstance, vkState: *Vk_State) !vk.VkPhysica
 
     for (devices) |device| {
         if (try isDeviceSuitable(device, vkState)) {
+            vkState.msaaSamples = getMaxUsableSampleCount(device);
             return device;
         }
     }
