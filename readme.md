@@ -7,10 +7,10 @@ Execute:
 `zig build`
 in terminal to build.
 
-But there will be some error.
- - need to fix some build pathes as there will not match your system
+But there will be some errors.
+ - need to fix some build pathes as they will not match your system
     - in the file build.zig change `const vulkan_sdk = "C:/Zeugs/VulkanSDK/1.4.304.1/";` to your vulkan sdk folder
-    - there is also an import for the vulkan headers, but i did not figure out how to use it with the windows specific vulkan functions. The system specific path mentioned before would not be required if i could get it to work to fix.
+    - there is also an import for the vulkan headers, but i did not figure out how to use it with the windows specific vulkan functions. The system specific path mentioned before would not be required if i could get it to work.
  - the imported zigimg library did not work with my zig 0.14 version. I manually fixed the errors of it, so it could build. They were not that difficult. With the current imported version you would need to do it yourself too.
     - if enough time has passed it will probably enough to update the zigimg library import to the newest version, if it will support zig 0.14.
     
