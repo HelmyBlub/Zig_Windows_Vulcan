@@ -15,8 +15,10 @@ const zigimg = @import("zigimg");
 //           - want to know some limit with vulkan so i can compare to my sdl version
 //              - 10_000 iamges at 2_000 fps
 //                  - with multisampling: 1_000 fps
+//                  - multisampling + blending = 600fps (but hard to compare as painting dogs was changed for this case)
 //              - 1_000_000 images smaller scaled than before in 120 fps
-// open questions: differnce between this vulkan project and my sdl version seems to high? currently factor over 100x more performant seems to much
+// open questions: differnce between this vulkan project and my sdl version seems to high?
+//      - currently factor over 100x more performant seems to much
 //      - can i use sdl in a more performant way
 //
 // - problem: zigimg not working with zig 0.14 and loading images
@@ -128,11 +130,11 @@ pub fn main() !void {
 }
 
 fn setupVertices() !void {
-    const rows = 100;
-    const columns = 100;
+    const rows = 10;
+    const columns = 10;
     const triangleCount = rows * columns;
     const vertexCount = triangleCount * 3;
-    const triangleSize = 0.1;
+    const triangleSize = 0.6;
     vertices = try std.heap.page_allocator.alloc(Vertex, vertexCount);
     const stepSizeX: f32 = 2.0 / @as(f32, @floatFromInt(columns));
     const stepSizeY: f32 = 2.0 / @as(f32, @floatFromInt(rows));
@@ -140,9 +142,9 @@ fn setupVertices() !void {
         const currX = -1.0 + stepSizeX * @as(f32, @floatFromInt(x));
         for (0..rows) |y| {
             const currY = -1.0 + stepSizeY * @as(f32, @floatFromInt(y));
-            vertices[(x * rows + y) * 3] = .{ .pos = .{ currX, currY }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.3, 0.3 } };
-            vertices[(x * rows + y) * 3 + 1] = .{ .pos = .{ currX + triangleSize, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.7, 0.7 } };
-            vertices[(x * rows + y) * 3 + 2] = .{ .pos = .{ currX, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 0.3, 0.7 } };
+            vertices[(x * rows + y) * 3] = .{ .pos = .{ currX, currY }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ -0.2, -0.5 } };
+            vertices[(x * rows + y) * 3 + 1] = .{ .pos = .{ currX + triangleSize, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ 1.8, 1.5 } };
+            vertices[(x * rows + y) * 3 + 2] = .{ .pos = .{ currX, currY + triangleSize }, .color = .{ 1.0, 0.0, 0.0 }, .texCoord = .{ -0.2, 1.5 } };
         }
     }
     std.debug.print("verticeCount: {}\n", .{vertices.len});
@@ -159,7 +161,7 @@ fn mainLoop(vkState: *Vk_State) !void {
         counter += 1;
         tick();
         try drawFrame(vkState);
-        // std.time.sleep(10_000_000);
+        std.time.sleep(10_000_000);
     }
     const timePassed = std.time.microTimestamp() - startTime;
     const fps = @divTrunc(maxCounter * 1_000_000, timePassed);
@@ -1201,7 +1203,13 @@ fn createGraphicsPipeline(vkState: *Vk_State) !void {
 
     var colorBlendAttachment = vk.VkPipelineColorBlendAttachmentState{
         .colorWriteMask = vk.VK_COLOR_COMPONENT_R_BIT | vk.VK_COLOR_COMPONENT_G_BIT | vk.VK_COLOR_COMPONENT_B_BIT | vk.VK_COLOR_COMPONENT_A_BIT,
-        .blendEnable = vk.VK_FALSE,
+        .blendEnable = vk.VK_TRUE,
+        .srcColorBlendFactor = vk.VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = vk.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = vk.VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = vk.VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = vk.VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = vk.VK_BLEND_OP_ADD,
     };
 
     var colorBlending = vk.VkPipelineColorBlendStateCreateInfo{
@@ -1452,7 +1460,7 @@ fn pickPhysicalDevice(instance: vk.VkInstance, vkState: *Vk_State) !vk.VkPhysica
 
     for (devices) |device| {
         if (try isDeviceSuitable(device, vkState)) {
-            vkState.msaaSamples = getMaxUsableSampleCount(device);
+            // vkState.msaaSamples = getMaxUsableSampleCount(device);
             return device;
         }
     }
