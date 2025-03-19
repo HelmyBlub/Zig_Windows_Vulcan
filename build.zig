@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
     const zigwin32 = b.dependency("zigwin32", .{});
     exe_mod.addImport("zigwin32", zigwin32.module("zigwin32"));
     const exe = b.addExecutable(.{
-        .name = "windowsVulcan",
+        .name = "windowsVulkan",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);

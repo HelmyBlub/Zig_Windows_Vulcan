@@ -1,4 +1,4 @@
-# Zig, Windows and Vulcan
+# Zig, Windows and Vulkan
 This project creates a Windows Window and uses Vulkan Graphics API to draw 100 Dog images without any other libraries.
 So it will only work on Windows (i used windows 10) and vulkan sdk needs to be installed. I used zig version 0.14
 
